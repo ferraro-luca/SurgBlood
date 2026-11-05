@@ -138,7 +138,7 @@ if __name__ == '__main__':
 
         weight_path = '/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain'
 
-        save_path = '/work/cvcs2026/blood_overflow/04_results/cholec_try_2fps_evaluate'
+        save_path = '/work/cvcs2026/blood_overflow/04_results/cholec_inference_2fps'
 
         t = Test(
             network, 
