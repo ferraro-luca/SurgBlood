@@ -18,8 +18,8 @@ from metrics.maskIouFloder import SegmentationMetric
 def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=1, type=int)
-    parser.add_argument('--save_path', default="/home/pjl307/ZZJ/CholeBleedingPoint/SAM2.1/save/mytest", type=str)
-    parser.add_argument('--data_path', default="/home/pjl307/ZZJ/CholeBleedingPoint/Cholec95-project/CholecBP95", type=str)
+    parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/04_results/cholec_try_2fps_evaluate", type=str)
+    parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_try_2fps/", type=str)
     parser.add_argument('--max_epochs', type=int, default=20, help='maximum epoch number to train')
     parser.add_argument('--base_lr', type=float, default=6e-5, help='segmentation network learning rate')
     parser.add_argument('--img_size', type=int, default=512, help='input patch size of network input')
@@ -29,13 +29,13 @@ def parser():
     parser.add_argument('--AdamW', action='store_true', help='If activated, use AdamW to finetune SAM model')
     parser.add_argument('--snapshot', type=str, default=None, help='path to the snapshot')
 
-    parser.add_argument('--test_data_path', default="/home/pjl307/ZZJ/CholeBleedingPoint/Cholec95-project/CholecBP95",type=str)
+    parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_try_2fps/",type=str)
 
     parser.parse_args()
     return parser.parse_args()
 
 
-
+"""
 def train(Network,testpath):
     args = parser()
     print(f"Processing {testpath}.............................................................")
@@ -48,7 +48,7 @@ def train(Network,testpath):
 
     net = Network()
 
-    path = '/home/pjl307/ZZJ/CholeBleedingPoint/Cholec95-project/BlooDet/save/mytest/model-17'  # 替换为实际权重文件路径
+    path = '/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain'  # 替换为实际权重文件路径
     net.load_state_dict(torch.load(path))
     net.eval()
     net.cuda()
@@ -147,7 +147,72 @@ def train(Network,testpath):
     print("MPCK2:", MPCK20)
     print("MPCK5:", MPCK5)
     print("MPCK10:", MPCK10)
+"""
 
+def train(Network,testpath):
+    args = parser()
+    print(f"Processing {testpath}.............................................................")
+
+    test_dataset = CholeBPTest(args.test_data_path, mode=testpath)
+    testloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
+
+    net = Network()
+
+    path = '/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain'
+    net.load_state_dict(torch.load(path))
+    net.eval()
+    net.cuda()
+
+    #############################test############################################
+    ignore_labels = [255]
+    metric = SegmentationMetric(2)
+
+    frame_length_total = 0
+
+    with torch.no_grad():
+        for step, sample in enumerate(testloader):
+            # Estrazione esclusiva di immagini, maschere e metadati (punti ignorati)
+            images = sample['images']
+            masks = sample['masks']
+            video_name_dict = sample['video_meta_dict']
+            frame_names = sample['frame_names']
+            
+            images = images.cuda()
+            images = images.view(-1, 3, 512, 512)
+            shape = (512, 512)
+            frame_length = images.size(0)
+            
+            # Inferenza del modello
+            video_segments = net(images)
+
+            video_name = video_name_dict['filename_or_obj'][0]
+            masks = masks.squeeze(0).cpu()
+
+            frame_length_total += frame_length
+
+            for i in range(frame_length):
+                # Estrazione maschera predetta
+                current_pred_mask = video_segments[i][1]['mask_logits'].unsqueeze(1)
+                frame_name = frame_names[i][0]
+                
+                # Calcolo IoU e Dice
+                sam_pre = current_pred_mask
+                sam_pre = torch.sigmoid(sam_pre)
+
+                sam_gt = masks[i].cpu()
+                sam_pre = F.interpolate(sam_pre, size=shape, mode='bilinear', align_corners=False)
+                sam_pre = sam_pre.squeeze(1)
+
+                # Binarizzazione a soglia 0.5
+                sam_pre = (sam_pre > 0.5).int()
+                sam_gt = (sam_gt > 0.5).int()
+                
+                # Aggiunta al calcolatore di metriche
+                hist = metric.addBatch(sam_pre, sam_gt, ignore_labels)
+
+    # Stampa esclusiva delle metriche di segmentazione
+    print(f"IoU: {metric.IntersectionOverUnion()}")
+    print(f"Dice: {metric.DiceCoefficient()}")
 
 if __name__ == '__main__':
     # test_paths = [

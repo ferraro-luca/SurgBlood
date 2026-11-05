@@ -136,16 +136,15 @@ if __name__ == '__main__':
 
     for model_num in models:
 
-        weight_path = r'/home/pjl307/ZZJ/CholeBleedingPoint/Cholec95-project/BlooDet/save/mytest/model-{}'.format(
-            model_num)
+        weight_path = '/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain'
 
+        save_path = '/work/cvcs2026/blood_overflow/04_results/cholec_try_2fps_evaluate'
 
-        save_path = r'/home/pjl307/ZZJ/CholeBleedingPoint/Cholec95-project/BlooDet/saveResult/mytestDemo/model-{}'.format(
-            model_num)
-
-
-        t = Test(network, data_path=r'/home/pjl307/ZZJ/CholeBleedingPoint/Cholec95-project/CholecBP95/testDemo',
-                 weight=weight_path)
+        t = Test(
+            network, 
+            data_path='/work/cvcs2026/blood_overflow/03_processed/cholec_try_2fps/',
+            weight=weight_path
+        )
 
 
         t.save(save_path=save_path)

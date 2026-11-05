@@ -149,6 +149,7 @@ def _load_checkpoint(model, ckpt_path):
         # Update the state dictionary with new entries after the iteration
         sd.update(new_sd_entries)
         
+        """
         missing_keys, unexpected_keys = model.load_state_dict(sd, strict=False)
         if missing_keys:
             logging.error(missing_keys)
@@ -156,6 +157,21 @@ def _load_checkpoint(model, ckpt_path):
         # 检查是否有缺失或意外的key
         if unexpected_keys:
             logging.error(unexpected_keys)
+            raise RuntimeError(f"Unexpected keys found: {unexpected_keys}")
+
+        """
+        missing_keys, unexpected_keys = model.load_state_dict(sd, strict=False)
+    
+        #debugging: print missing and unexpected keys
+        print(f"Missing keys: {len(missing_keys)}")
+        for key in missing_keys:
+            print(f"  MISSING: {key}")
+
+        print(f"Unexpected keys: {len(unexpected_keys)}")
+        for key in unexpected_keys:
+            print(f"  UNEXPECTED: {key}")
+
+        if unexpected_keys:
             raise RuntimeError(f"Unexpected keys found: {unexpected_keys}")
         logging.info("Loaded checkpoint successfully")
 

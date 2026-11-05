@@ -20,7 +20,7 @@ class SAM2_Video_baseline(nn.Module):
         # self.sam2_checkpoint = "/home/siat-hci/ZhoZhangJun/SAM2-Codes/checkpoints/sam2_hiera_base_plus.pt"
         # self.model_cfg = "sam2_hiera_b+.yaml"
         #sam2_hiera_large
-        self.sam2_checkpoint = "/home/pjl307/ZZJ/CholeBleedingPoint/Cholec95-project/BlooDet/sam2_hiera_base_plus.pt"
+        self.sam2_checkpoint = "/work/cvcs2026/blood_overflow/weights/sam2_hiera_base_plus.pt"
         self.model_cfg = "sam2_hiera_b+.yaml"
 
         # # # #sam2_hiera_large
