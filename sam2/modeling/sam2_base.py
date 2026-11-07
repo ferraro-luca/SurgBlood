@@ -199,7 +199,7 @@ class SAM2Base(torch.nn.Module):
         # self.mlp_point=MLP(self.hidden_dim, self.hidden_dim, self.hidden_dim, 3)
 
         # Instantiate the optical flow estimator
-        self.estimator = OpticalFlowEstimator(model_path='/homes/lferraro/cvcs2026/SurgPilot/models/blood_det/pwcnet/network-default.pytorch')
+        self.estimator = OpticalFlowEstimator(model_path='/work/cvcs2026/blood_overflow/weights/network-default.pytorch')
 
         self.offset_x_proj = nn.Sequential(
             nn.Linear(1, 256),  # 输入 1 维，输出 512 维
