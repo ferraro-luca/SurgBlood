@@ -46,7 +46,7 @@ class CholeBPTest(Dataset):
             img = self.transforms(img)
             mask = T.ToTensor()(T.Resize((self.img_size, self.img_size))(mask))
 
-            # point = self.load_point(point_path, frame_name)
+            point = self.load_point(point_path, frame_name)
 
             images.append(img)  # Append image tensor
             masks.append(mask)  # Append mask tensor
@@ -78,19 +78,16 @@ class CholeBPTest(Dataset):
         point_file_path = os.path.join(point_path, f'{frame_name}.txt')
         point = (0, 0)  # Default point if not found
 
+        # Se il file del punto esiste proviamo a leggerlo, altrimenti restituisce (0.0, 0.0) in silenzio
         if os.path.exists(point_file_path):
             try:
                 with open(point_file_path, 'r') as f:
                     line = f.readline().strip()
                     if line:
                         x, y = map(float, line.split())
-                        point = (x, y)
-                    else:
-                        print(f"Warning: Empty point file for {frame_name}")
-            except ValueError:
-                print(f"Warning: Invalid point format in file {point_file_path}")
-        else:
-            print(f"Warning: Point file not found for {frame_name}")
+                        return (x, y)
+            except Exception:
+                pass
 
         return point
 
