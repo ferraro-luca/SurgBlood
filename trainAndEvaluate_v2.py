@@ -99,8 +99,8 @@ def train(Network):
     max_epoch = args.max_epochs
     for epoch in range(max_epoch):
         optimizer.param_groups[0]['lr'] = (1 - abs((epoch + 1) / (args.max_epochs + 1) * 2 - 1)) * args.base_lr
-        optimizer.param_groups[1]['lr'] = (1 - abs((epoch + 1) / (args.max_epochs + 1) * 2 - 1)) * args.base_lr * 100
-        optimizer.param_groups[2]['lr'] = (1 - abs((epoch + 1) / (args.max_epochs + 1) * 2 - 1)) * args.base_lr  # 5e-6
+        #optimizer.param_groups[1]['lr'] = (1 - abs((epoch + 1) / (args.max_epochs + 1) * 2 - 1)) * args.base_lr * 100
+        #optimizer.param_groups[2]['lr'] = (1 - abs((epoch + 1) / (args.max_epochs + 1) * 2 - 1)) * args.base_lr  # 5e-6
 
         for step, sample in enumerate(trainloader):
             image, mask, edge, point, video_meta_dict = sample['image'], sample['mask'], sample['edge'], sample[
