@@ -281,6 +281,9 @@ def train(Network):
             torch.save(net.state_dict(), save_file)
             print(f"\n*** Modello migliorato! Salvato in {save_file} (Dice: {best_dice:.4f}) ***\n")
 
+        last_file = f"{args.save_path}/last_finetuned_cholec.pth"
+        torch.save(net.state_dict(), last_file)
+        print(f"Checkpoint aggiornato salvato in: {last_file}")
 
 if __name__ == '__main__':
     train(network)
