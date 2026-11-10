@@ -257,7 +257,9 @@ class Network(torch.nn.Module):
 
 		self.netRefiner = Refiner()
 
-		self.load_state_dict({ strKey.replace('module', 'net'): tenWeight for strKey, tenWeight in torch.load(__file__.replace('run.py', 'network-' + arguments_strModel + '.pytorch')).items() })
+		#self.load_state_dict({ strKey.replace('module', 'net'): tenWeight for strKey, tenWeight in torch.load(__file__.replace('run.py', 'network-' + arguments_strModel + '.pytorch')).items() })
+		pwc_weights_path = '/work/cvcs2026/blood_overflow/weights/network-default.pytorch'
+		self.load_state_dict({ strKey.replace('module', 'net'): tenWeight for strKey, tenWeight in torch.load(pwc_weights_path).items() })
 	# end
 
 	def forward(self, tenFirst, tenSecond):
