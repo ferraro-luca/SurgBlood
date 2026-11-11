@@ -263,23 +263,34 @@ def train(Network):
         MPCK10 = point_MPCK10_TP / point_exist_total if point_exist_total > 0 else 0.0
         MPCK20 = point_MPCK20_TP / point_exist_total if point_exist_total > 0 else 0.0
         
-        current_iou = metric.IntersectionOverUnion()
-        current_dice = metric.DiceCoefficient()
+        raw_iou = metric.IntersectionOverUnion()
+        raw_dice = metric.DiceCoefficient()
+
+        # Estraiamo lo scalare float per la classe 1 (Sanguinamento)
+        if hasattr(raw_dice, 'numel') and raw_dice.numel() > 1:
+            current_dice = raw_dice[1].item()
+            current_iou = raw_iou[1].item()
+        elif hasattr(raw_dice, '__len__') and len(raw_dice) > 1:
+            current_dice = float(raw_dice[1])
+            current_iou = float(raw_iou[1])
+        else:
+            current_dice = float(raw_dice)
+            current_iou = float(raw_iou)
 
         print("evaluate_epoch---------------:", epoch + 1)
-        print(f"IoU: {current_iou}")
-        print(f"Dice: {current_dice}")
+        print(f"IoU: {raw_iou}")
+        print(f"Dice: {raw_dice}")
         print("precision_exist:", precision_exist)
         print("MPCK2:", MPCK20)
         print("MPCK5:", MPCK5)
         print("MPCK10:", MPCK10)
 
-        # --- MODIFICA 4: Salvataggio basato sul Dice Score ---
+        # Ora il confronto avverrà correttamente tra due numeri float
         if current_dice > best_dice:
             best_dice = current_dice
             save_file = args.save_path + '/best_finetuned_cholec.pth'
             torch.save(net.state_dict(), save_file)
-            print(f"\n*** Modello migliorato! Salvato in {save_file} (Dice: {best_dice:.4f}) ***\n")
+            print(f"\n*** Modello migliorato! Salvato in {save_file} (Dice Sangue: {best_dice:.4f}) ***\n")
 
         last_file = f"{args.save_path}/last_finetuned_cholec.pth"
         torch.save(net.state_dict(), last_file)
