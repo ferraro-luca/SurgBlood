@@ -38,12 +38,12 @@ def dice_loss(logits, mask, smooth=1e-6):
 def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=1, type=int)
-    parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/weights/cholec_finetune_v1", type=str)
+    parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/weights/cholec_finetune_v2", type=str)
     parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_splitted/", type=str)
     parser.add_argument('--max_epochs', type=int, default=20, help='maximum epoch number to train')
     parser.add_argument('--base_lr', type=float, default=6e-5, help='segmentation network learning rate')
     parser.add_argument('--img_size', type=int, default=512, help='input patch size of network input')
-    parser.add_argument('--run_name', type=str, default="finetune_mask_edge_v1", help='nome della run su W&B')
+    parser.add_argument('--run_name', type=str, default="finetune_mask_edge_v2", help='nome della run su W&B')
 
     parser.add_argument('--warmup', action='store_true', help='If activated, warp up the learning from a lower lr to the base_lr')
     parser.add_argument('--AdamW', action='store_true', help='If activated, use AdamW to finetune SAM model')
