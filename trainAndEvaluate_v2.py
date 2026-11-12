@@ -197,9 +197,7 @@ def train(Network):
             sw.add_scalars('losses', {
                 'total_loss': loss.item(),
                 'mask_loss': lossmask.item(),
-                'edge_loss': lossmask_edge.item(),
-                'lossPoint': lossPoint.item(),
-                'existed_loss': lossExsited.item()
+                'edge_loss': lossmask_edge.item()
             }, global_step=global_step)
 
             # Log Weights & Biases (Step di Training)
@@ -207,8 +205,6 @@ def train(Network):
                 "train/total_loss": loss.item(),
                 "train/mask_loss": lossmask.item(),
                 "train/edge_loss": lossmask_edge.item(),
-                "train/point_loss": lossPoint.item(),
-                "train/existed_loss": lossExsited.item(),
                 "train/lr": optimizer.param_groups[0]['lr']
             }, step=global_step)
 
@@ -216,7 +212,7 @@ def train(Network):
                 print(
                     f'{datetime.datetime.now()} | Step: {global_step}/{epoch + 1}/{max_epoch} | '
                     f'Total Loss={loss.item():.6f}, Mask Loss={lossmask.item():.6f}, '
-                    f'Edge Loss={lossmask_edge.item():.6f}, Point Loss={lossPoint.item():.6f}'
+                    f'Edge Loss={lossmask_edge.item():.6f}'
                 )
 
         ############################# Evaluate / Test ############################################
