@@ -33,8 +33,8 @@ def parser():
 
     parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/02_extracted/SurgBlood/SurgBlood-Dataset-test/",type=str)
 
-    parser.add_argument('--run_name', type=str, default='SurgBlood_metrics_baseline', help='Nome della run su W&B')
-    parser.add_argument('--model_variant', type=str, default='baseline', help='baseline o finetuned_cholec')
+    parser.add_argument('--run_name', type=str, default='SurgBlood_metrics_Finetuned_cholec', help='Nome della run su W&B')
+    parser.add_argument('--model_variant', type=str, default='finetuned_cholec', help='baseline o finetuned_cholec')
 
     parser.parse_args()
     return parser.parse_args()
@@ -69,7 +69,7 @@ def train(Network,testpath):
 
     net = Network()
 
-    path = '/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain'  # 替换为实际权重文件路径
+    path = '/work/cvcs2026/blood_overflow/weights/cholec_finetune_v2/best_finetuned_cholec.pth'  # 替换为实际权重文件路径
     net.load_state_dict(torch.load(path))
     net.eval()
     net.cuda()
