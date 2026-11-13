@@ -35,7 +35,7 @@ def parser():
 
     # Nuovi argomenti per W&B
     parser.add_argument('--run_name', type=str, default='metrics_cholec_baseline', help='Nome della run su W&B')
-    parser.add_argument('--model_variant', type=str, default='finetuned_with_cholec', help='baseline o finetuned_cholec')
+    parser.add_argument('--model_variant', type=str, default='baseline', help='baseline o finetuned_cholec')
 
     parser.parse_args()
     return parser.parse_args()
