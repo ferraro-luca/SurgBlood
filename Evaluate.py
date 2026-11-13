@@ -29,13 +29,13 @@ def parser():
 
     parser.add_argument('--warmup', action='store_true', help='If activated, warp up the learning from a lower lr to the base_lr')
     parser.add_argument('--AdamW', action='store_true', help='If activated, use AdamW to finetune SAM model')
-    parser.add_argument('--snapshot', type=str, default='/work/cvcs2026/blood_overflow/weights/cholec_finetune_v2/best_finetuned_cholec.pth', help='path to the snapshot')
+    parser.add_argument('--snapshot', type=str, default='/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain', help='path to the snapshot')
 
     parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_test/", type=str)
 
     # Nuovi argomenti per W&B
-    parser.add_argument('--run_name', type=str, default='eval_cholec_finetuned', help='Nome della run su W&B')
-    parser.add_argument('--model_variant', type=str, default='finetuned_cholec', help='baseline o finetuned_cholec')
+    parser.add_argument('--run_name', type=str, default='metrics_cholec_baseline', help='Nome della run su W&B')
+    parser.add_argument('--model_variant', type=str, default='finetuned_with_cholec', help='baseline o finetuned_cholec')
 
     parser.parse_args()
     return parser.parse_args()
