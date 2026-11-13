@@ -6,11 +6,13 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 import torch.optim as optim
+import wandb
+import numpy as np
 # import SAM2_Video_baseline as network
 from sam2_video_baseline import SAM2_Video_baseline as network
 
 from datasetVideoTrain import CholeBPTrain
-from datasetVideoTest  import CholeBPTest
+from datasetVideoTest import CholeBPTest
 
 from metrics.maskIouFloder import SegmentationMetric
 
@@ -27,9 +29,13 @@ def parser():
 
     parser.add_argument('--warmup', action='store_true', help='If activated, warp up the learning from a lower lr to the base_lr')
     parser.add_argument('--AdamW', action='store_true', help='If activated, use AdamW to finetune SAM model')
-    parser.add_argument('--snapshot', type=str, default=None, help='path to the snapshot')
+    parser.add_argument('--snapshot', type=str, default='/work/cvcs2026/blood_overflow/weights/cholec_finetune_v2/best_finetuned_cholec.pth', help='path to the snapshot')
 
-    parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_test/",type=str)
+    parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_test/", type=str)
+
+    # Nuovi argomenti per W&B
+    parser.add_argument('--run_name', type=str, default='eval_cholec_finetuned', help='Nome della run su W&B')
+    parser.add_argument('--model_variant', type=str, default='finetuned_cholec', help='baseline o finetuned_cholec')
 
     parser.parse_args()
     return parser.parse_args()
@@ -149,16 +155,35 @@ def train(Network,testpath):
     print("MPCK10:", MPCK10)
 """
 
-def train(Network,testpath):
+
+def train(Network, testpath):
     args = parser()
     print(f"Processing {testpath}.............................................................")
+
+    # Inizializzazione W&B (salva i file temporanei su /work per non sporcare la cartella del progetto)
+    run = wandb.init(
+        entity="mgualtieri01-unimore",
+        project="BlooDet",
+        name=args.run_name,
+        dir="/work/cvcs2026/blood_overflow/temp_wandb",  # Directory temporanea per i file W&B
+        job_type="evaluation",
+        tags=["evaluation", "cholec_test", args.model_variant, testpath],
+        config={
+            "checkpoint": args.snapshot,
+            "dataset": "cholec_test",
+            "split": testpath,
+            "model_variant": args.model_variant,
+            "img_size": args.img_size,
+            "threshold": 0.5,
+        }
+    )
 
     test_dataset = CholeBPTest(args.test_data_path, mode=testpath)
     testloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
 
     net = Network()
 
-    path = '/work/cvcs2026/blood_overflow/weights/cholec_finetune_v1/best_finetuned_cholec.pth'
+    path = args.snapshot
     net.load_state_dict(torch.load(path))
     net.eval()
     net.cuda()
@@ -211,8 +236,31 @@ def train(Network,testpath):
                 hist = metric.addBatch(sam_pre, sam_gt, ignore_labels)
 
     # Stampa esclusiva delle metriche di segmentazione
-    print(f"IoU: {metric.IntersectionOverUnion()}")
-    print(f"Dice: {metric.DiceCoefficient()}")
+    iou_scores = metric.IntersectionOverUnion()
+    dice_scores = metric.DiceCoefficient()
+    print(f"IoU: {iou_scores}")
+    print(f"Dice: {dice_scores}")
+
+    # Log delle metriche su W&B
+    iou_arr = iou_scores.detach().cpu().numpy() if torch.is_tensor(iou_scores) else np.asarray(iou_scores)
+    dice_arr = dice_scores.detach().cpu().numpy() if torch.is_tensor(dice_scores) else np.asarray(dice_scores)
+
+    iou_blood = float(iou_arr[1]) if iou_arr.ndim > 0 and len(iou_arr) > 1 else float(iou_arr)
+    dice_blood = float(dice_arr[1]) if dice_arr.ndim > 0 and len(dice_arr) > 1 else float(dice_arr)
+    miou = float(iou_arr.mean())
+    mdice = float(dice_arr.mean())
+
+    metrics_to_log = {
+        "test/IoU_blood": iou_blood,
+        "test/Dice_blood": dice_blood,
+        "test/mIoU": miou,
+        "test/mDice": mdice,
+        "test/total_frames": frame_length_total,
+    }
+    run.log(metrics_to_log)
+    run.summary.update(metrics_to_log)
+    run.finish()
+
 
 if __name__ == '__main__':
     # test_paths = [

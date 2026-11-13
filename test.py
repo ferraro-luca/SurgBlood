@@ -136,9 +136,9 @@ if __name__ == '__main__':
 
     for model_num in models:
 
-        weight_path = '/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain'
+        weight_path = '/work/cvcs2026/blood_overflow/weights/cholec_finetune_v2/best_finetuned_cholec.pth'
 
-        save_path = '/work/cvcs2026/blood_overflow/04_results/cholec_finetuned'
+        save_path = '/work/cvcs2026/blood_overflow/04_results/cholec_(finetuned_with_only_cholec)'
 
         t = Test(
             network, 
