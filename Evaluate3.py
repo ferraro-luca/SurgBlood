@@ -21,7 +21,7 @@ def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/04_results/Hemo_Cholec_evaluate", type=str)
-    parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_test/", type=str)
+    parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_test/", type=str)
     parser.add_argument('--max_epochs', type=int, default=20, help='maximum epoch number to train')
     parser.add_argument('--base_lr', type=float, default=6e-5, help='segmentation network learning rate')
     parser.add_argument('--img_size', type=int, default=512, help='input patch size of network input')
@@ -29,13 +29,13 @@ def parser():
 
     parser.add_argument('--warmup', action='store_true', help='If activated, warp up the learning from a lower lr to the base_lr')
     parser.add_argument('--AdamW', action='store_true', help='If activated, use AdamW to finetune SAM model')
-    parser.add_argument('--snapshot', type=str, default='/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain', help='path to the snapshot')
+    parser.add_argument('--snapshot', type=str, default='/work/cvcs2026/blood_overflow/weights/Hemo_Cholec_finetune_v2/best_finetuned_Hemo_Cholec.pth', help='path to the snapshot')
 
     parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_test/", type=str)
 
     # Nuovi argomenti per W&B
-    parser.add_argument('--run_name', type=str, default='Hemo_Cholec_metrics_baseline', help='Nome della run su W&B')
-    parser.add_argument('--model_variant', type=str, default='baseline', help='baseline o finetuned_hemoset')
+    parser.add_argument('--run_name', type=str, default='Hemo_Cholec_metrics_Finetuned_Hemo_Cholec_v2', help='Nome della run su W&B')
+    parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v2', help='baseline o finetuned_hemoset')
 
     parser.parse_args()
     return parser.parse_args()
@@ -167,10 +167,10 @@ def train(Network, testpath):
         name=args.run_name,
         dir="/work/cvcs2026/blood_overflow/temp_wandb",  # Directory temporanea per i file W&B
         job_type="evaluation",
-        tags=["evaluation", "Hemoset_test", args.model_variant, testpath],
+        tags=["evaluation", "Hemo_Cholec_test", args.model_variant, testpath],
         config={
             "checkpoint": args.snapshot,
-            "dataset": "Hemoset_test",
+            "dataset": "Hemo_Cholec_test",
             "split": testpath,
             "model_variant": args.model_variant,
             "img_size": args.img_size,
