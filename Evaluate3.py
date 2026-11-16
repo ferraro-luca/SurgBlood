@@ -21,7 +21,7 @@ def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/04_results/Hemo_Cholec_evaluate", type=str)
-    parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_test/", type=str)
+    parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_test/", type=str)
     parser.add_argument('--max_epochs', type=int, default=20, help='maximum epoch number to train')
     parser.add_argument('--base_lr', type=float, default=6e-5, help='segmentation network learning rate')
     parser.add_argument('--img_size', type=int, default=512, help='input patch size of network input')

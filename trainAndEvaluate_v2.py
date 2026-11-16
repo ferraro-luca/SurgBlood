@@ -38,18 +38,17 @@ def dice_loss(logits, mask, smooth=1e-6):
 def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=1, type=int)
-    parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/weights/cholec_finetune_v2", type=str)
-    parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_splitted/", type=str)
+    parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/weights/Hemo_Cholec_finetune_v2", type=str)
+    parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_splitted/", type=str)
     parser.add_argument('--max_epochs', type=int, default=20, help='maximum epoch number to train')
     parser.add_argument('--base_lr', type=float, default=6e-5, help='segmentation network learning rate')
     parser.add_argument('--img_size', type=int, default=512, help='input patch size of network input')
-    parser.add_argument('--run_name', type=str, default="finetune_mask_edge_v2", help='nome della run su W&B')
+    parser.add_argument('--run_name', type=str, default="finetuning_v2(hemo_cholec_with_only_masks_and_edges)", help='nome della run su W&B')
 
     parser.add_argument('--warmup', action='store_true', help='If activated, warp up the learning from a lower lr to the base_lr')
     parser.add_argument('--AdamW', action='store_true', help='If activated, use AdamW to finetune SAM model')
     parser.add_argument('--snapshot', type=str, default=None, help='path to the snapshot')
-    parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/cholec_splitted/", type=str)
-
+    parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_splitted/", type=str)
     return parser.parse_args()
 
 
@@ -63,8 +62,8 @@ def train(Network):
         project="BlooDet",
         name=args.run_name,
         job_type="fine-tuning",
-        tags=["fine-tuning", "CholecSeg8k_filtered", "mask_decoder", "edge_generator"],
-        notes="Fine-tuning di BlooDet su CholecSeg8k_filtered (sbloccati solo mask_decoder e edge_generator)",
+        tags=["fine-tuning", "Hemo_Cholec", "mask_decoder", "edge_generator"],
+        notes="Fine-tuning of BlooDet on Hemo_Cholec (with only mask_decoder and edge_generator trainable).",
         config={
             "experiment_type": "fine-tuning",
             "base_lr": args.base_lr,
@@ -74,9 +73,9 @@ def train(Network):
             "frames_length": 8,
             "overlap": 7,
             "architecture": "BlooDet-SAM2",
-            "dataset": "CholecSeg8k_filtered",
+            "dataset": "Hemo_Cholec_splitted",
             "trainable_modules": ["mask_decoder", "edge_generator"],
-            "loss_weights": {"mask": 1.0, "edge": 0.5},
+            "loss_weights": {"mask": 1.0, "edge": 1.0},
             "optimizer": "AdamW"
         }
     )
@@ -180,7 +179,7 @@ def train(Network):
                 if not torch.all(points[i] == 0):
                     lossPoint += F.smooth_l1_loss(pre_point[i].unsqueeze(0), points[i].unsqueeze(0))
 
-            loss = lossmask + 0.5 * lossmask_edge
+            loss = lossmask + lossmask_edge
 
             if lossmask > 10 and epoch > 17:
                 print("lossmask:", lossmask)
@@ -307,13 +306,13 @@ def train(Network):
         # Salvataggio Miglior Modello (Best) + Upload su W&B
         if current_dice > best_dice:
             best_dice = current_dice
-            save_file = os.path.join(args.save_path, 'best_finetuned_cholec.pth')
+            save_file = os.path.join(args.save_path, 'best_finetuned_Hemo_Cholec.pth')
             torch.save(net.state_dict(), save_file)
             run.save(save_file)
             print(f"\n*** Modello migliorato! Salvato in {save_file} (Dice Sangue: {best_dice:.4f}) ***\n")
 
         # Salvataggio Garantito dell'ultima epoca (Last)
-        last_file = os.path.join(args.save_path, 'last_finetuned_cholec.pth')
+        last_file = os.path.join(args.save_path, 'last_finetuned_Hemo_Cholec.pth')
         torch.save(net.state_dict(), last_file)
         print(f"Checkpoint aggiornato salvato in: {last_file}")
 
