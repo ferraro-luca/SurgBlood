@@ -61,7 +61,7 @@ def train(Network):
     args = parser()
     os.makedirs(args.save_path, exist_ok=True)
 
-    # --- INIZIALIZZAZIONE WEIGHTS & BIASES ---
+   
     run = wandb.init(
         entity="mgualtieri01-unimore",
         project="BlooDet",
@@ -97,7 +97,7 @@ def train(Network):
 
     net = Network()
 
-    # A. Carica i pesi originali (sola lettura)
+    # A. Carica i pesi originali 
     pretrained_path = '/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain'
     net.load_state_dict(torch.load(pretrained_path))
     net.cuda()
@@ -329,7 +329,7 @@ def train(Network):
         raw_iou = metric.IntersectionOverUnion()
         raw_dice = metric.DiceCoefficient()
 
-        # Estrazione scalare float per la classe 1 (Sanguinamento)
+       
         if hasattr(raw_dice, 'numel') and raw_dice.numel() > 1:
             current_dice = raw_dice[1].item()
             current_iou = raw_iou[1].item()
@@ -348,7 +348,7 @@ def train(Network):
         print("MPCK5:", MPCK5)
         print("MPCK10:", MPCK10)
 
-        # Salvataggio Miglior Modello (Best) + Upload su W&B
+        
         if current_dice > best_dice:
             best_dice = current_dice
             save_file = os.path.join(args.save_path, 'best_finetuned_Hemo_Cholec.pth')
@@ -361,7 +361,7 @@ def train(Network):
         torch.save(net.state_dict(), last_file)
         print(f"Checkpoint aggiornato salvato in: {last_file}")
 
-        # Log Weights & Biases (Fine Epoca)
+       
         run.log({
             "epoch": epoch + 1,
             "val/IoU_blood": current_iou,
