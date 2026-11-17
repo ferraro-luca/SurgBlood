@@ -54,7 +54,7 @@ def train(Network,testpath):
 
     net = Network()
 
-    path = '/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain'  # 替换为实际权重文件路径
+    path = '/work/cvcs2026/blood_overflow/weights/BlooDet-Pretrain'  # 替换为实际权重文件路径gg
     net.load_state_dict(torch.load(path))
     net.eval()
     net.cuda()
