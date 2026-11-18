@@ -20,7 +20,7 @@ from metrics.maskIouFloder import SegmentationMetric
 def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=1, type=int)
-    parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/04_results/SurgBlood_evaluate_Hemo_Cholec_v3", type=str)
+    parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/04_results/SurgBlood_evaluate_Hemo_Cholec_v4", type=str)
     parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/02_extracted/SurgBlood/SurgBlood-Dataset-test/", type=str)
     parser.add_argument('--max_epochs', type=int, default=20, help='maximum epoch number to train')
     parser.add_argument('--base_lr', type=float, default=6e-5, help='segmentation network learning rate')
@@ -33,8 +33,8 @@ def parser():
 
     parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/02_extracted/SurgBlood/SurgBlood-Dataset-test/",type=str)
 
-    parser.add_argument('--run_name', type=str, default='SurgBlood_metrics_Finetuned_Hemo_Cholec_v3', help='Nome della run su W&B')
-    parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v3', help='baseline o finetuned_cholec')
+    parser.add_argument('--run_name', type=str, default='SurgBlood_metrics_Finetuned_Hemo_Cholec_v4_lovasz', help='Nome della run su W&B')
+    parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v4', help='baseline o finetuned_cholec')
 
     parser.parse_args()
     return parser.parse_args()
@@ -69,7 +69,7 @@ def train(Network,testpath):
 
     net = Network()
 
-    path = '/work/cvcs2026/blood_overflow/weights/Hemo_Cholec_finetune_v3_encoder/best_finetuned_Hemo_Cholec.pth'  # 替换为实际权重文件路径
+    path = '/work/cvcs2026/blood_overflow/weights/Hemo_Cholec_finetune_v4_lovasz/best_finetuned_Hemo_Cholec.pth'  # 替换为实际权重文件路径
     net.load_state_dict(torch.load(path))
     net.eval()
     net.cuda()
