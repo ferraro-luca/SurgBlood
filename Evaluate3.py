@@ -35,9 +35,6 @@ def parser():
     parser.add_argument('--run_name', type=str, default='Hemo_Cholec_metrics_Finetuned_Hemo_Cholec_v3_no_TTA', help='Nome della run su W&B')
     parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v3', help='baseline o finetuned_hemoset')
 
-    # Opzione TTA (Horizontal Flip)
-    parser.add_argument('--no_tta', action='store_true', help='Disabilita Horizontal Flip TTA')
-
     return parser.parse_args()
 
 
@@ -56,10 +53,9 @@ def extract_scores(metric_obj):
 
 def train(Network, testpath):
     args = parser()
-    use_tta = not args.no_tta
-    thresholds = [0.35, 0.40, 0.45, 0.50, 0.55]
+    threshold = 0.50
 
-    print(f"Processing {testpath} | TTA (Horizontal Flip): {use_tta} | Thresholds: {thresholds}")
+    print(f"Processing {testpath} | Threshold: {threshold}")
 
     run = wandb.init(
         entity="mgualtieri01-unimore",
@@ -67,15 +63,15 @@ def train(Network, testpath):
         name=args.run_name,
         dir="/work/cvcs2026/blood_overflow/temp_wandb",
         job_type="evaluation",
-        tags=["evaluation", args.model_variant, testpath, "TTA" if use_tta else "no_TTA"],
+        tags=["evaluation", args.model_variant, testpath, "no_TTA"],
         config={
             "checkpoint": args.snapshot,
             "test_data_path": args.test_data_path,
             "split": testpath,
             "model_variant": args.model_variant,
             "img_size": args.img_size,
-            "tta": use_tta,
-            "thresholds": thresholds,
+            "tta": False,
+            "threshold": threshold,
         }
     )
 
@@ -88,8 +84,7 @@ def train(Network, testpath):
     net.cuda()
 
     ignore_labels = [255]
-    # Un calcolatore di metriche per ciascuna soglia in un solo passaggio
-    metrics_by_th = {th: SegmentationMetric(2) for th in thresholds}
+    metric = SegmentationMetric(2)
 
     frame_length_total = 0
 
@@ -102,59 +97,37 @@ def train(Network, testpath):
             shape = (512, 512)
             frame_length = images.size(0)
 
-            # 1. Forward pass originale
+            # Forward pass singolo (nessuna TTA)
             video_segments = net(images)
-
-            # 2. Forward pass con Horizontal Flip TTA (se attivo)
-            if use_tta:
-                images_flip = torch.flip(images, dims=[-1])
-                video_segments_flip = net(images_flip)
 
             masks = masks.squeeze(0).cpu()
             frame_length_total += frame_length
 
             for i in range(frame_length):
-                # Probabilità predizione originale
                 pred_logits = video_segments[i][1]['mask_logits'].unsqueeze(1)
-                prob_orig = torch.sigmoid(pred_logits)
-
-                if use_tta:
-                    # Probabilità predizione flippata, poi ri-ribaltata orizzontalmente
-                    pred_logits_flip = video_segments_flip[i][1]['mask_logits'].unsqueeze(1)
-                    prob_flip = torch.flip(torch.sigmoid(pred_logits_flip), dims=[-1])
-                    sam_pre = 0.5 * (prob_orig + prob_flip)
-                else:
-                    sam_pre = prob_orig
+                sam_pre = torch.sigmoid(pred_logits)
 
                 sam_gt = masks[i].cpu()
                 sam_pre = F.interpolate(sam_pre, size=shape, mode='bilinear', align_corners=False)
                 sam_pre = sam_pre.squeeze(1)
 
-                sam_gt_int = (sam_gt > 0.5).int()
+                # Binarizzazione a soglia 0.50
+                sam_pre = (sam_pre > threshold).int()
+                sam_gt = (sam_gt > 0.5).int()
+                metric.addBatch(sam_pre, sam_gt, ignore_labels)
 
-                # Valutazione su tutte le soglie nello stesso forward pass
-                for th in thresholds:
-                    sam_pre_int = (sam_pre > th).int()
-                    metrics_by_th[th].addBatch(sam_pre_int, sam_gt_int, ignore_labels)
+    iou_blood, dice_blood, miou, mdice = extract_scores(metric)
+    print(f"IoU: {metric.IntersectionOverUnion()}")
+    print(f"Dice: {metric.DiceCoefficient()}")
+    print(f"Threshold {threshold:.2f} -> IoU_blood: {iou_blood:.4f} | Dice_blood: {dice_blood:.4f} | mIoU: {miou:.4f} | mDice: {mdice:.4f}")
 
-    print("\n================ RISULTATI PER SOGLIA ================")
-    metrics_to_log = {"test/total_frames": frame_length_total}
-
-    for th in thresholds:
-        iou_blood, dice_blood, miou, mdice = extract_scores(metrics_by_th[th])
-        print(f"Threshold {th:.2f} -> IoU_blood: {iou_blood:.4f} | Dice_blood: {dice_blood:.4f} | mIoU: {miou:.4f} | mDice: {mdice:.4f}")
-
-        th_key = f"{int(round(th * 100))}"
-        metrics_to_log[f"sweep/IoU_blood_th{th_key}"] = iou_blood
-        metrics_to_log[f"sweep/Dice_blood_th{th_key}"] = dice_blood
-
-        # Mantiene i nomi standard a soglia 0.50 per confronto diretto su W&B
-        if th == 0.50:
-            metrics_to_log["test/IoU_blood"] = iou_blood
-            metrics_to_log["test/Dice_blood"] = dice_blood
-            metrics_to_log["test/mIoU"] = miou
-            metrics_to_log["test/mDice"] = mdice
-
+    metrics_to_log = {
+        "test/IoU_blood": iou_blood,
+        "test/Dice_blood": dice_blood,
+        "test/mIoU": miou,
+        "test/mDice": mdice,
+        "test/total_frames": frame_length_total,
+    }
     run.log(metrics_to_log)
     run.summary.update(metrics_to_log)
     run.finish()
