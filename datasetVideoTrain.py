@@ -10,12 +10,18 @@ import numpy as np
 class CholeBPTrain(Dataset):
     def __init__(self, data_path, img_size, frames_length, overlap, mode='train', augment=False,
                  brightness=0.15, contrast=0.15, saturation=0.15,
-                 color_p=0.8, blur_p=0.2, blur_sigma=(0.1, 1.0), blur_kernel=5):
+                 color_p=0.8, blur_p=0.2, blur_sigma=(0.1, 1.0), blur_kernel=5,
+                 has_point_labels=True):
         self.data_path = data_path
         self.mode = mode
         self.img_size = img_size
         self.frames_length = frames_length
         self.overlap = overlap
+
+        # v6: False for datasets without bleeding-point annotations (e.g. Hemo_Cholec).
+        # A missing point then means "not annotated", not "no bleeding point": the
+        # training script must skip the point losses for these clips.
+        self.has_point_labels = has_point_labels
 
         # Clip-consistent photometric augmentation (v5). Disabled by default so that
         # older training scripts (v1-v4) keep their original behaviour.
@@ -89,6 +95,7 @@ class CholeBPTrain(Dataset):
             'mask': torch.stack(masks),    # Stack list of tensors into one tensor
             'edge': torch.stack(edges),    # Stack list of tensors into one tensor
             'point': torch.stack(points),  # Stack point tensors
+            'point_labeled': torch.tensor(self.has_point_labels),
             'video_meta_dict': video_meta_dict,
         }
 

@@ -29,11 +29,11 @@ def parser():
     parser.add_argument('--AdamW', action='store_true', help='If activated, use AdamW to finetune SAM model')
     parser.add_argument('--snapshot', type=str, default='/work/cvcs2026/blood_overflow/weights/Hemo_Cholec_finetune_v3_encoder/best_finetuned_Hemo_Cholec.pth', help='path to the snapshot')
 
-    parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemoset_test/", type=str)
+    parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_test/", type=str)
 
     # Nuovi argomenti per W&B
     parser.add_argument('--run_name', type=str, default='Hemo_Cholec_metrics_Finetuned_Hemo_Cholec_v3_no_TTA', help='Nome della run su W&B')
-    parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v3', help='baseline o finetuned_hemoset')
+    parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v3', help='baseline o finetuned_Hemo_Cholec')
 
     return parser.parse_args()
 
