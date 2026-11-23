@@ -5,11 +5,52 @@ from sam2.build_sam import build_sam2_video_predictor
 import time
 import cv2
 import os
+import json
+
+
+# ---------------------------------------------------------------------------------------
+# Architecture options that are NOT stored in the state_dict travel with the checkpoint in
+# a small 'model_config.json' saved in the same folder (written by the training script).
+# Evaluation scripts call apply_model_config(net, ckpt_path) after loading the weights.
+# ---------------------------------------------------------------------------------------
+MODEL_CONFIG_NAME = 'model_config.json'
+
+
+def save_model_config(save_dir, **config):
+    with open(os.path.join(save_dir, MODEL_CONFIG_NAME), 'w') as f:
+        json.dump(config, f, indent=2)
+
+
+def load_model_config(ckpt_path):
+    cfg_path = os.path.join(os.path.dirname(os.path.abspath(ckpt_path)), MODEL_CONFIG_NAME)
+    if os.path.exists(cfg_path):
+        with open(cfg_path) as f:
+            return json.load(f)
+    return {}
+
+
+def apply_model_config(net, ckpt_path, point_gate='auto'):
+    """Apply the architecture options of a checkpoint.
+
+    point_gate: 'auto' -> read model_config.json next to the checkpoint (default: gate ON,
+                i.e. original BlooDet, for v1-v6 checkpoints that have no config file);
+                'on' / 'off' -> force it (e.g. to test v6 without the gate at inference).
+    """
+    cfg = load_model_config(ckpt_path)
+    if point_gate == 'auto':
+        gate = cfg.get('point_gates_mask', True)
+        source = 'model_config.json' if 'point_gates_mask' in cfg else 'default (no model_config.json)'
+    else:
+        gate = (point_gate == 'on')
+        source = f'forced --point_gate {point_gate}'
+    net.predictor.point_gates_mask = gate
+    print(f"Point-existence gate on the blood mask: {'ON (original BlooDet)' if gate else 'OFF (v7)'}  [{source}]")
+    return gate
 
 
 class SAM2_Video_baseline(nn.Module):
 
-    def __init__(self):
+    def __init__(self, point_gates_mask=True):
         super(SAM2_Video_baseline, self).__init__()
 
         # # #sam2_hiera_large
@@ -32,6 +73,7 @@ class SAM2_Video_baseline(nn.Module):
 
         #video net 
         self.predictor = build_sam2_video_predictor(self.model_cfg, self.sam2_checkpoint , device="cuda")
+        self.predictor.point_gates_mask = point_gates_mask
 
         # for n, p in self.sam2image.named_parameters():
         #     p.requires_grad = False

@@ -10,6 +10,7 @@ import wandb
 import numpy as np
 # import SAM2_Video_baseline as network
 from sam2_video_baseline import SAM2_Video_baseline as network
+from sam2_video_baseline import apply_model_config
 
 from datasetVideoTrain import CholeBPTrain
 from datasetVideoTest  import CholeBPTest
@@ -35,6 +36,8 @@ def parser():
 
     parser.add_argument('--run_name', type=str, default='SurgBlood_metrics_Finetuned_Hemo_Cholec_v5', help='Nome della run su W&B')
     parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v5', help='baseline o finetuned_cholec')
+    parser.add_argument('--point_gate', choices=['auto', 'on', 'off'], default='auto',
+                        help="auto = legge model_config.json accanto al checkpoint (v7: off; v1-v6: on)")
 
     parser.parse_args()
     return parser.parse_args()
@@ -60,6 +63,7 @@ def train(Network,testpath):
             "model_variant": args.model_variant,
             "img_size": args.img_size,
             "threshold": 0.5,
+            "point_gate": args.point_gate,
         }
     )
 
@@ -73,6 +77,7 @@ def train(Network,testpath):
     path = args.snapshot 
     print(f"Checkpoint: {path}")
     net.load_state_dict(torch.load(path))
+    apply_model_config(net, path, args.point_gate)
     net.eval()
     net.cuda()
 
@@ -90,6 +95,8 @@ def train(Network,testpath):
     point_MPCK5_TP = 0
     point_MPCK10_TP = 0
     point_MPCK20_TP = 0
+    empty_frames = 0      # frame senza sangue nella GT
+    empty_frames_fp = 0   # ... in cui il modello predice comunque sangue (falso positivo)
 
     with torch.no_grad():
         for step, sample in enumerate(testloader):
@@ -126,6 +133,9 @@ def train(Network,testpath):
                 sam_pre = (sam_pre > 0.5).int()
                 sam_gt = (sam_gt > 0.5).int()
                 hist = metric.addBatch(sam_pre, sam_gt, ignore_labels)
+                if sam_gt.sum() == 0:
+                    empty_frames += 1
+                    empty_frames_fp += int(sam_pre.sum() > 0)
 
                 # GT
                 existed_label = ( points[i][0] != 0 and points[i][1] != 0)
@@ -172,6 +182,8 @@ def train(Network,testpath):
     print("MPCK2:", MPCK20)
     print("MPCK5:", MPCK5)
     print("MPCK10:", MPCK10)
+    print(f"Frame senza sangue: {empty_frames} | con falso positivo: {empty_frames_fp} "
+          f"({100 * empty_frames_fp / max(empty_frames, 1):.1f}%)")
 
     # Log delle metriche su W&B
     iou_arr = iou_scores.detach().cpu().numpy() if torch.is_tensor(iou_scores) else np.asarray(iou_scores)

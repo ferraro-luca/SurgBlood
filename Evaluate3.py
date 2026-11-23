@@ -9,6 +9,7 @@ import torch.optim as optim
 import wandb
 import numpy as np
 from sam2_video_baseline import SAM2_Video_baseline as network
+from sam2_video_baseline import apply_model_config
 
 from datasetVideoTrain import CholeBPTrain
 from datasetVideoTest import CholeBPTest
@@ -34,6 +35,8 @@ def parser():
     # Nuovi argomenti per W&B
     parser.add_argument('--run_name', type=str, default='Hemo_Cholec_metrics_Finetuned_Hemo_Cholec_v3_no_TTA', help='Nome della run su W&B')
     parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v3', help='baseline o finetuned_Hemo_Cholec')
+    parser.add_argument('--point_gate', choices=['auto', 'on', 'off'], default='auto',
+                        help="auto = legge model_config.json accanto al checkpoint (v7: off; v1-v6: on)")
 
     return parser.parse_args()
 
@@ -71,6 +74,7 @@ def train(Network, testpath):
             "model_variant": args.model_variant,
             "img_size": args.img_size,
             "tta": False,
+            "point_gate": args.point_gate,
             "threshold": threshold,
         }
     )
@@ -80,6 +84,7 @@ def train(Network, testpath):
 
     net = Network()
     net.load_state_dict(torch.load(args.snapshot))
+    apply_model_config(net, args.snapshot, args.point_gate)
     net.eval()
     net.cuda()
 

@@ -191,6 +191,13 @@ class SAM2Base(torch.nn.Module):
             trunc_normal_(self.no_obj_ptr, std=0.02)
         self.use_mlp_for_obj_ptr_proj = use_mlp_for_obj_ptr_proj
 
+        # v7: if False, the bleeding-point existence score no longer gates the blood
+        # mask (no zeroing to NO_OBJ_SCORE) nor the memory object pointer (no swap to
+        # no_obj_ptr). Default True = original BlooDet behaviour (v1-v6 checkpoints).
+        # It is a plain attribute (not in the state_dict): see model_config.json handling
+        # in sam2_video_baseline.py.
+        self.point_gates_mask = True
+
         self._build_sam_heads()
         self.add_all_frames_to_correct_as_cond = add_all_frames_to_correct_as_cond
         self.max_cond_frames_in_attn = max_cond_frames_in_attn
@@ -561,12 +568,15 @@ class SAM2Base(torch.nn.Module):
             is_obj_appearing = object_score_logits > 0
 
             # Mask used for spatial memories is always a *hard* choice between obj and no obj,
-            # consistent with the actual mask prediction
-            low_res_multimasks = torch.where(
-                is_obj_appearing[:, None, None],
-                low_res_multimasks,
-                NO_OBJ_SCORE,
-            )
+            # consistent with the actual mask prediction.
+            # NB: object_score_logits comes from the bleeding-POINT decoder, so in the original
+            # BlooDet "no bleeding point" wipes the whole blood mask. v7 disables this.
+            if self.point_gates_mask:
+                low_res_multimasks = torch.where(
+                    is_obj_appearing[:, None, None],
+                    low_res_multimasks,
+                    NO_OBJ_SCORE,
+                )
 
         # convert masks from possibly bfloat16 (or float16) to float32
         # (older PyTorch versions before 2.1 don't support `interpolate` on bf16)
@@ -594,7 +604,10 @@ class SAM2Base(torch.nn.Module):
         obj_ptr = self.obj_ptr_proj(sam_output_token)
         if self.pred_obj_scores:
             # Allow *soft* no obj ptr, unlike for masks
-            if self.soft_no_obj_ptr:
+            if not self.point_gates_mask:
+                # v7: the memory object pointer always comes from the mask token
+                lambda_is_obj_appearing = torch.ones_like(object_score_logits)
+            elif self.soft_no_obj_ptr:
                 # Only hard possible with gt
                 assert not self.teacher_force_obj_scores_for_mem
                 lambda_is_obj_appearing = object_score_logits.sigmoid()
