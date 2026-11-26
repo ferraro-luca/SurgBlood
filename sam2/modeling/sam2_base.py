@@ -198,6 +198,12 @@ class SAM2Base(torch.nn.Module):
         # in sam2_video_baseline.py.
         self.point_gates_mask = True
 
+        # Soft gate (inference experiment): if True and the point-existence score says
+        # "no bleeding point" (logit <= 0), the click is NOT given to the mask decoder
+        # (SAM 'not-a-point' label -1). The mask itself is never zeroed: it is decided by
+        # edges + memory only. Plain attribute, default False = v7 behaviour.
+        self.point_soft_gate = False
+
         self._build_sam_heads()
         self.add_all_frames_to_correct_as_cond = add_all_frames_to_correct_as_cond
         self.max_cond_frames_in_attn = max_cond_frames_in_attn
@@ -489,6 +495,11 @@ class SAM2Base(torch.nn.Module):
         BP_point = BP_point.unsqueeze(0)
         BP_sam_point_coords = BP_point
         BP_sam_point_labels = torch.ones(B, 1, dtype=torch.int32, device=device)  # (with label 1)
+        if self.point_soft_gate:
+            # no predicted point -> no click (label -1 = SAM 'not a point')
+            has_point = (point_object_score_logits.reshape(B, -1)[:, :1] > 0)
+            BP_sam_point_labels = torch.where(has_point, BP_sam_point_labels,
+                                              torch.full_like(BP_sam_point_labels, -1))
         assert BP_sam_point_coords.size(0) == B and BP_sam_point_labels.size(0) == B
 
         mask_inputs = edge_mask

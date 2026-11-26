@@ -9,7 +9,7 @@ import torch.optim as optim
 import wandb
 import numpy as np
 from sam2_video_baseline import SAM2_Video_baseline as network
-from sam2_video_baseline import apply_model_config
+from sam2_video_baseline import apply_model_config, load_model_config
 
 from datasetVideoTrain import CholeBPTrain
 from datasetVideoTest import CholeBPTest
@@ -37,6 +37,8 @@ def parser():
     parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v3', help='baseline o finetuned_Hemo_Cholec')
     parser.add_argument('--point_gate', choices=['auto', 'on', 'off'], default='auto',
                         help="auto = legge model_config.json accanto al checkpoint (v7: off; v1-v6: on)")
+    parser.add_argument('--soft_gate', choices=['auto', 'on', 'off'], default='auto',
+                        help="on = nessun click al mask decoder quando lo score dice 'nessun punto'")
 
     return parser.parse_args()
 
@@ -75,6 +77,7 @@ def train(Network, testpath):
             "img_size": args.img_size,
             "tta": False,
             "point_gate": args.point_gate,
+            "soft_gate": args.soft_gate,
             "threshold": threshold,
         }
     )
@@ -82,9 +85,12 @@ def train(Network, testpath):
     test_dataset = CholeBPTest(args.test_data_path, mode=testpath)
     testloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
 
-    net = Network()
+    # Architettura dal model_config.json (default Hiera-B+ per v1-v7)
+    model_cfg = load_model_config(args.snapshot).get('model_cfg', 'sam2_hiera_b+.yaml')
+    print(f"Model config: {model_cfg}")
+    net = Network(model_cfg=model_cfg)
     net.load_state_dict(torch.load(args.snapshot))
-    apply_model_config(net, args.snapshot, args.point_gate)
+    apply_model_config(net, args.snapshot, args.point_gate, args.soft_gate)
     net.eval()
     net.cuda()
 

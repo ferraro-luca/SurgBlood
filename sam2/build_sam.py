@@ -148,6 +148,12 @@ def _load_checkpoint(model, ckpt_path):
 
         # Update the state dictionary with new entries after the iteration
         sd.update(new_sd_entries)
+
+        # Non-Hiera encoders (e.g. DinoV3Trunk) bring their own pretrained weights:
+        # do not load SAM 2's Hiera encoder/neck weights into them. Hiera: unchanged.
+        if getattr(getattr(model.image_encoder, "trunk", None), "skip_sam2_ckpt", False):
+            sd = {k: v for k, v in sd.items() if not k.startswith("image_encoder.")}
+            print("[build_sam] encoder is not Hiera: skipping SAM 2 image_encoder weights")
         
         """
         missing_keys, unexpected_keys = model.load_state_dict(sd, strict=False)

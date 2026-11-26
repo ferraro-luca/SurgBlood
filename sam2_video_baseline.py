@@ -29,7 +29,7 @@ def load_model_config(ckpt_path):
     return {}
 
 
-def apply_model_config(net, ckpt_path, point_gate='auto'):
+def apply_model_config(net, ckpt_path, point_gate='auto', soft_gate='auto'):
     """Apply the architecture options of a checkpoint.
 
     point_gate: 'auto' -> read model_config.json next to the checkpoint (default: gate ON,
@@ -45,12 +45,20 @@ def apply_model_config(net, ckpt_path, point_gate='auto'):
         source = f'forced --point_gate {point_gate}'
     net.predictor.point_gates_mask = gate
     print(f"Point-existence gate on the blood mask: {'ON (original BlooDet)' if gate else 'OFF (v7)'}  [{source}]")
+    if soft_gate == 'auto':
+        soft = bool(cfg.get('point_soft_gate', False))
+        soft_src = 'model_config.json' if 'point_soft_gate' in cfg else 'default'
+    else:
+        soft = (soft_gate == 'on')
+        soft_src = f'forced --soft_gate {soft_gate}'
+    net.predictor.point_soft_gate = soft
+    print(f"Soft gate (no click when no point is predicted): {'ON' if soft else 'OFF'}  [{soft_src}]")
     return gate
 
 
 class SAM2_Video_baseline(nn.Module):
 
-    def __init__(self, point_gates_mask=True):
+    def __init__(self, point_gates_mask=True, model_cfg="sam2_hiera_b+.yaml"):
         super(SAM2_Video_baseline, self).__init__()
 
         # # #sam2_hiera_large
@@ -62,7 +70,8 @@ class SAM2_Video_baseline(nn.Module):
         # self.model_cfg = "sam2_hiera_b+.yaml"
         #sam2_hiera_large
         self.sam2_checkpoint = "/work/cvcs2026/blood_overflow/weights/sam2_hiera_base_plus.pt"
-        self.model_cfg = "sam2_hiera_b+.yaml"
+        # default = original BlooDet (Hiera-B+); "sam2_dinov3_b_surg.yaml" = DINOv3 SurgeNetXL encoder
+        self.model_cfg = model_cfg
 
         # # # #sam2_hiera_large
         # self.sam2_checkpoint = "/home/siat-hci/ZhoZhangJun/SAM2-Codes/checkpoints/sam2_hiera_small.pt"

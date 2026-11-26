@@ -61,6 +61,9 @@ def parser():
     parser.add_argument('--init_ckpt', type=str,
                         default="/work/cvcs2026/blood_overflow/weights/Hemo_Cholec_SurgBlood_finetune_v6/best_finetuned_v6.pth",
                         help='weights to start from (v6 best)')
+    parser.add_argument('--point_gate', choices=['off', 'on'], default='off',
+                        help="off = v7 (interruttore punto->maschera spento); "
+                             "on = esperimento di controllo 'v6 + 20 epoche' (interruttore acceso, come v1-v6)")
     parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_splitted/", type=str,
                         help='Hemo_Cholec root (train/ used for training)')
     parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_splitted/", type=str,
@@ -192,7 +195,7 @@ def train(Network):
         project="BlooDet",
         name=args.run_name,
         job_type="fine-tuning",
-        tags=["fine-tuning", "Hemo_Cholec", "SurgBlood", "joint", "point_branches", "no_point_gate", "v7"],
+        tags=["fine-tuning", "Hemo_Cholec", "SurgBlood", "joint", "point_branches", "point_gate_" + args.point_gate, "v7" if args.point_gate == 'off' else "v6_plus20_control"],
         notes="v7: v6 recipe from v6 weights, point-existence score no longer gates the blood mask / memory pointer.",
         config=vars(args) | {
             "architecture": "BlooDet-SAM2",
@@ -201,7 +204,7 @@ def train(Network):
             "clip_augmentation": not args.no_augment,
             "balanced_sampling": args.balance,
             "selection_metric": "mean(Dice Hemo_Cholec val, Dice SurgBlood val)",
-            "point_gates_mask": False,
+            "point_gates_mask": args.point_gate == 'on',
         }
     )
 
@@ -230,13 +233,15 @@ def train(Network):
         'surg': DataLoader(CholeBPTest(args.surgblood_path, mode='test'), batch_size=1, shuffle=False, num_workers=0),
     }
 
-    net = Network(point_gates_mask=False)
+    gate_on = (args.point_gate == 'on')
+    net = Network(point_gates_mask=gate_on)
     net.load_state_dict(torch.load(args.init_ckpt))
     net.cuda()
     print(f"Pesi iniziali: {args.init_ckpt}")
-    print(f"Point-existence gate on the blood mask: OFF (v7)")
+    print(f"Point-existence gate on the blood mask: {'ON (controllo v6 + 20 epoche)' if gate_on else 'OFF (v7)'}")
     # The gate option is not in the state_dict: store it next to the checkpoints
-    save_model_config(args.save_path, point_gates_mask=False, init_ckpt=args.init_ckpt, version='v7')
+    save_model_config(args.save_path, point_gates_mask=gate_on, init_ckpt=args.init_ckpt,
+                      version='v6+20ep_control' if gate_on else 'v7')
 
     group_names, param_groups, group_base_lrs = build_param_groups(net, args)
     optimizer = optim.AdamW(param_groups, betas=(0.9, 0.999), weight_decay=0.1)

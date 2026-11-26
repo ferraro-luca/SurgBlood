@@ -10,7 +10,7 @@ import wandb
 import numpy as np
 # import SAM2_Video_baseline as network
 from sam2_video_baseline import SAM2_Video_baseline as network
-from sam2_video_baseline import apply_model_config
+from sam2_video_baseline import apply_model_config, load_model_config
 
 from datasetVideoTrain import CholeBPTrain
 from datasetVideoTest  import CholeBPTest
@@ -38,6 +38,8 @@ def parser():
     parser.add_argument('--model_variant', type=str, default='finetuned_Hemo_Cholec_v5', help='baseline o finetuned_cholec')
     parser.add_argument('--point_gate', choices=['auto', 'on', 'off'], default='auto',
                         help="auto = legge model_config.json accanto al checkpoint (v7: off; v1-v6: on)")
+    parser.add_argument('--soft_gate', choices=['auto', 'on', 'off'], default='auto',
+                        help="on = nessun click al mask decoder quando lo score dice 'nessun punto'")
 
     parser.parse_args()
     return parser.parse_args()
@@ -64,6 +66,7 @@ def train(Network,testpath):
             "img_size": args.img_size,
             "threshold": 0.5,
             "point_gate": args.point_gate,
+            "soft_gate": args.soft_gate,
         }
     )
 
@@ -71,13 +74,15 @@ def train(Network,testpath):
     testloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
 
 
-    net = Network()
-
     # Usa --snapshot se passato, altrimenti il checkpoint di default
     path = args.snapshot 
+    # Architettura dal model_config.json (default Hiera-B+ per v1-v7)
+    model_cfg = load_model_config(path).get('model_cfg', 'sam2_hiera_b+.yaml')
+    print(f"Model config: {model_cfg}")
+    net = Network(model_cfg=model_cfg)
     print(f"Checkpoint: {path}")
     net.load_state_dict(torch.load(path))
-    apply_model_config(net, path, args.point_gate)
+    apply_model_config(net, path, args.point_gate, args.soft_gate)
     net.eval()
     net.cuda()
 
@@ -97,6 +102,10 @@ def train(Network,testpath):
     point_MPCK20_TP = 0
     empty_frames = 0      # frame senza sangue nella GT
     empty_frames_fp = 0   # ... in cui il modello predice comunque sangue (falso positivo)
+    metric_blood_point = SegmentationMetric(2)    # frame con sangue E punto annotato
+    metric_blood_nopoint = SegmentationMetric(2)  # frame con sangue ma SENZA punto
+    n_blood_point = n_blood_nopoint = 0
+    n_pred_nopoint = 0    # frame in cui lo score dice "nessun punto" (= click tolto se soft gate ON)
 
     with torch.no_grad():
         for step, sample in enumerate(testloader):
@@ -145,6 +154,12 @@ def train(Network,testpath):
                 exited_score_logits = torch.sigmoid(exited_score_logits).cpu().numpy()
                 # >0.5 is 1, <0.5 is 0
                 existed_pred = (exited_score_logits > 0.5).astype(int)
+                n_pred_nopoint += int(not existed_pred.all())
+                if sam_gt.sum() > 0:
+                    if existed_label:
+                        metric_blood_point.addBatch(sam_pre, sam_gt, ignore_labels); n_blood_point += 1
+                    else:
+                        metric_blood_nopoint.addBatch(sam_pre, sam_gt, ignore_labels); n_blood_nopoint += 1
                 # Calculate TP
                 point_exist_TP += (existed_pred == existed_label.cpu().numpy()).all()
 
@@ -184,6 +199,16 @@ def train(Network,testpath):
     print("MPCK10:", MPCK10)
     print(f"Frame senza sangue: {empty_frames} | con falso positivo: {empty_frames_fp} "
           f"({100 * empty_frames_fp / max(empty_frames, 1):.1f}%)")
+    def _blood(m):
+        d = m.DiceCoefficient(); i = m.IntersectionOverUnion()
+        return float(d[1]), float(i[1])
+    if n_blood_point:
+        d, i = _blood(metric_blood_point)
+        print(f"Frame con sangue e punto: {n_blood_point} | Dice {d:.4f} | IoU {i:.4f}")
+    if n_blood_nopoint:
+        d, i = _blood(metric_blood_nopoint)
+        print(f"Frame con sangue SENZA punto: {n_blood_nopoint} | Dice {d:.4f} | IoU {i:.4f}")
+    print(f"Frame in cui lo score dice 'nessun punto': {n_pred_nopoint} / {frame_length_total}")
 
     # Log delle metriche su W&B
     iou_arr = iou_scores.detach().cpu().numpy() if torch.is_tensor(iou_scores) else np.asarray(iou_scores)
