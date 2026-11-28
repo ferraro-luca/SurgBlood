@@ -373,6 +373,7 @@ class SAM2VideoPredictor(SAM2Base):
                 iou = current_out["iou"]
                 object_score_logits = current_out["object_score_logits"]
                 pred_edges = current_out["pred_edges"]
+                point_heatmap = current_out.get("point_heatmap")  # v8
 
                 if clear_non_cond_mem:
                     # clear non-conditioning memory of the surrounding frames
@@ -386,6 +387,7 @@ class SAM2VideoPredictor(SAM2Base):
                 iou = current_out["iou"]
                 object_score_logits = current_out["object_score_logits"]
                 pred_edges = current_out["pred_edges"]
+                point_heatmap = current_out.get("point_heatmap")  # v8
             else:
                 storage_key = "non_cond_frame_outputs"
                 current_out, pred_masks = self._run_single_frame_inference(
@@ -404,6 +406,7 @@ class SAM2VideoPredictor(SAM2Base):
                 iou = current_out["iou"]
                 object_score_logits = current_out["object_score_logits"]
                 pred_edges = current_out["pred_edges"]
+                point_heatmap = current_out.get("point_heatmap")  # v8
                 # print(current_out.keys())
                 # input()
 
@@ -421,7 +424,7 @@ class SAM2VideoPredictor(SAM2Base):
                 inference_state, pred_masks
             )
 
-            yield frame_idx, obj_ids, video_res_masks, iou, object_score_logits, pred_edges
+            yield frame_idx, obj_ids, video_res_masks, iou, object_score_logits, pred_edges, point_heatmap
 
 
     def train_propagate_in_video_preflight(self, inference_state):
@@ -668,6 +671,7 @@ class SAM2VideoPredictor(SAM2Base):
             consolidated_out["pointmem_features"] = out["pointmem_features"]
             consolidated_out["ori_image"] = out["ori_image"]
             consolidated_out["pred_edges"] = out["pred_edges"]
+            consolidated_out["point_heatmap"] = out.get("point_heatmap")  # v8
 
 
 
@@ -906,6 +910,7 @@ class SAM2VideoPredictor(SAM2Base):
             "object_score_logits":object_score_logits,
             "pred_edges": pred_edges,
             "ori_image": ori_image,
+            "point_heatmap": current_out.get("point_heatmap"),  # v8
         }
 
 

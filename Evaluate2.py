@@ -16,6 +16,7 @@ from datasetVideoTrain import CholeBPTrain
 from datasetVideoTest  import CholeBPTest
 
 from metrics.maskIouFloder import SegmentationMetric
+from sam2.modeling.point_heatmap import decode_heatmap, fuse_points
 
 
 def parser():
@@ -40,6 +41,8 @@ def parser():
                         help="auto = legge model_config.json accanto al checkpoint (v7: off; v1-v6: on)")
     parser.add_argument('--soft_gate', choices=['auto', 'on', 'off'], default='auto',
                         help="on = nessun click al mask decoder quando lo score dice 'nessun punto'")
+    parser.add_argument('--click_source', choices=['mlp', 'heatmap', 'fusion', 'oracle'], default='mlp',
+                        help="v8: da dove arriva il click alla maschera (mlp = come sempre; oracle = punto vero, solo SurgBlood)")
 
     parser.parse_args()
     return parser.parse_args()
@@ -67,6 +70,7 @@ def train(Network,testpath):
             "threshold": 0.5,
             "point_gate": args.point_gate,
             "soft_gate": args.soft_gate,
+            "click_source": args.click_source,
         }
     )
 
@@ -83,6 +87,8 @@ def train(Network,testpath):
     print(f"Checkpoint: {path}")
     net.load_state_dict(torch.load(path))
     apply_model_config(net, path, args.point_gate, args.soft_gate)
+    net.predictor.click_source = args.click_source
+    print(f"Click alla maschera da: {args.click_source}")
     net.eval()
     net.cuda()
 
@@ -106,6 +112,8 @@ def train(Network,testpath):
     metric_blood_nopoint = SegmentationMetric(2)  # frame con sangue ma SENZA punto
     n_blood_point = n_blood_nopoint = 0
     n_pred_nopoint = 0    # frame in cui lo score dice "nessun punto" (= click tolto se soft gate ON)
+    pck_extra = {'heatmap': [0, 0, 0], 'fusione': [0, 0, 0]}  # v8: PCK2/5/10 delle altre letture del punto
+    has_heatmap = None
 
     with torch.no_grad():
         for step, sample in enumerate(testloader):
@@ -115,6 +123,8 @@ def train(Network,testpath):
             images = images.view(-1, 3, 512, 512)
             shape = (512, 512)
             frame_length = images.size(0)
+            if args.click_source == 'oracle':
+                net.predictor.oracle_points = points.squeeze(0).float()  # punto vero per frame
             video_segments = net(images)
 
             video_name = video_name_dict['filename_or_obj'][0]
@@ -180,6 +190,17 @@ def train(Network,testpath):
                     if distances < (512*0.02):
                         point_MPCK20_TP += 1
 
+                    # v8: stesso PCK per la heatmap e per la fusione MLP+heatmap
+                    hm = video_segments[i][1].get('point_heatmap')
+                    has_heatmap = hm is not None
+                    if has_heatmap:
+                        heat_pt, peak = decode_heatmap(hm.unsqueeze(0))
+                        mlp_pt = pre_point.float().view(1, 2)
+                        for name, pt in (('heatmap', heat_pt), ('fusione', fuse_points(mlp_pt, heat_pt, peak))):
+                            d = torch.sqrt(torch.sum((point_gt.cpu().view(1, 2) - pt.cpu() * 512) ** 2, dim=-1)).item()
+                            for j, th in enumerate((0.02, 0.05, 0.10)):
+                                pck_extra[name][j] += int(d < 512 * th)
+
     # Calculate metrics
     precision_exist = point_exist_TP / frame_length_total
 
@@ -197,6 +218,10 @@ def train(Network,testpath):
     print("MPCK2:", MPCK20)
     print("MPCK5:", MPCK5)
     print("MPCK10:", MPCK10)
+    if has_heatmap:
+        print("PCK2/5/10  MLP      : " + " / ".join(f"{100 * v:.2f}" for v in (MPCK20, MPCK5, MPCK10)))
+        for name, c in pck_extra.items():
+            print(f"PCK2/5/10  {name:9s}: " + " / ".join(f"{100 * v / point_exist_total:.2f}" for v in c))
     print(f"Frame senza sangue: {empty_frames} | con falso positivo: {empty_frames_fp} "
           f"({100 * empty_frames_fp / max(empty_frames, 1):.1f}%)")
     def _blood(m):

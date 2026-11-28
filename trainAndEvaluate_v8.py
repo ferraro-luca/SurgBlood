@@ -1,0 +1,394 @@
+"""BlooDet v8 (exploratory): heatmap of the bleeding point, trained together with the MLP.
+
+Starts from the "v7 from baseline" weights (gate OFF throughout its history) and adds:
+  * the point decoder's 128x128 map (discarded by the original BlooDet) is trained as a
+    heatmap of the bleeding point: Gaussian target (sigma ~2 cells), CenterNet focal loss,
+    SurgBlood clips only; frames without a point get an all-zero target;
+  * the heatmap loss weight ramps 0 -> --heatmap_weight over --heatmap_warmup_epochs, so the
+    untrained map does not disturb the rest of the network at the start;
+  * the MLP point head and existence head keep their losses (unchanged);
+  * the click given to the mask decoder ALWAYS comes from the MLP during training
+    (click_source='mlp'): heatmap / fusion clicks are tested afterwards at inference;
+  * image encoder frozen (--encoder_lr 0), memory frozen, gate OFF.
+Validation reports PCK for three readings of the point: MLP, heatmap, fusion.
+Best checkpoint = mean Dice (as v6/v7): SurgBlood-val PCK is optimistic (seen in pretrain),
+so the MLP/heatmap/fusion comparison is done on the TEST set.
+"""
+import os
+import datetime
+import argparse
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, ConcatDataset, WeightedRandomSampler
+from tensorboardX import SummaryWriter
+import torch.optim as optim
+import wandb
+
+from sam2_video_baseline import SAM2_Video_baseline as network
+from sam2_video_baseline import save_model_config
+from datasetVideoTrain import CholeBPTrain
+from datasetVideoTest import CholeBPTest
+from metrics.maskIouFloder import SegmentationMetric
+from sam2.modeling.point_heatmap import (gaussian_heatmap_target, heatmap_focal_loss,
+                                         decode_heatmap, fuse_points)
+
+
+# Define focal loss
+def focal_loss(logits, mask, alpha=0.75, gamma=2.0):
+    mask = F.interpolate(mask, size=logits.size()[2:], mode='bilinear')
+    mask = mask.float()
+    bce_loss = F.binary_cross_entropy_with_logits(logits, mask, reduction='none')
+    probas = torch.sigmoid(logits)
+    pt = mask * probas + (1 - mask) * (1 - probas)
+    focal_weight = (1 - pt) ** gamma
+    alpha_weight = mask * alpha + (1 - mask) * (1 - alpha)
+    loss_focal = focal_weight * alpha_weight * bce_loss
+    return loss_focal.mean()
+
+
+# Define Dice Loss
+def dice_loss(logits, mask, smooth=1e-6):
+    mask = F.interpolate(mask, size=logits.size()[2:], mode='bilinear').float()
+    logits = torch.sigmoid(logits)
+    intersection = (logits * mask).sum(dim=(2, 3))
+    union = logits.sum(dim=(2, 3)) + mask.sum(dim=(2, 3))
+    dice = (2.0 * intersection + smooth) / (union + smooth)
+    return 1 - dice.mean()
+
+
+def parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--batch_size', default=1, type=int)
+    parser.add_argument('--save_path', default="/work/cvcs2026/blood_overflow/weights/Hemo_Cholec_SurgBlood_finetune_v8", type=str)
+    parser.add_argument('--init_ckpt', type=str,
+                        default="/work/cvcs2026/blood_overflow/weights/Hemo_Cholec_SurgBlood_finetune_v7_baseline/best_finetuned_v7.pth",
+                        help='weights to start from (v7 from baseline, best)')
+    parser.add_argument('--heatmap_weight', type=float, default=1.0, help='weight of the heatmap loss (SurgBlood only)')
+    parser.add_argument('--heatmap_warmup_epochs', type=float, default=2.0,
+                        help='heatmap loss weight ramps linearly from 0 to --heatmap_weight over these epochs')
+    parser.add_argument('--heatmap_sigma', type=float, default=2.0, help='Gaussian sigma of the target, in 128x128 cells')
+    parser.add_argument('--point_gate', choices=['off', 'on'], default='off',
+                        help="off = v7 (interruttore punto->maschera spento); "
+                             "on = esperimento di controllo 'v6 + 20 epoche' (interruttore acceso, come v1-v6)")
+    parser.add_argument('--data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_splitted/", type=str,
+                        help='Hemo_Cholec root (train/ used for training)')
+    parser.add_argument('--test_data_path', default="/work/cvcs2026/blood_overflow/03_processed/Hemo_Cholec_splitted/", type=str,
+                        help='Hemo_Cholec root for validation (test/ split, as in v3/v5)')
+    parser.add_argument('--surgblood_path', default="/work/cvcs2026/blood_overflow/03_processed/SurgBlood_splitted/", type=str,
+                        help='SurgBlood root prepared by src/datasets/surgblood_prepare.py (train/ and test/ = validation split)')
+    parser.add_argument('--max_epochs', type=int, default=20, help='maximum epoch number to train')
+    parser.add_argument('--base_lr', type=float, default=6e-5, help='mask decoder / edge learning rate')
+    parser.add_argument('--point_lr', type=float, default=6e-5, help='lr for bleeding-point branches')
+    parser.add_argument('--encoder_lr', type=float, default=0.0, help='lr for image encoder blocks 18-23 + neck (0 = frozen, v8 default)')
+    parser.add_argument('--memory_lr', type=float, default=0.0, help='lr for SAM2 memory_attention + memory_encoder (0 = frozen)')
+    parser.add_argument('--edge_weight', type=float, default=0.5, help='weight for edge loss')
+    parser.add_argument('--exist_weight', type=float, default=1.0, help='weight for point-existence loss (SurgBlood only)')
+    parser.add_argument('--point_weight', type=float, default=1.0, help='weight for point-coordinate loss (SurgBlood only)')
+    parser.add_argument('--no_augment', action='store_true', help='Disable clip-consistent photometric augmentation')
+    parser.add_argument('--balance', action='store_true',
+                        help='Sample 50/50 per dataset (with replacement). Default: every training clip of both datasets once per epoch')
+    parser.add_argument('--img_size', type=int, default=512, help='input patch size of network input')
+    parser.add_argument('--run_name', type=str, default="finetuning_v8(v7baseline_heatmap)", help='nome della run su W&B')
+
+    parser.add_argument('--debug_steps', type=int, default=0,
+                        help='>0: limit train steps per epoch and validation videos (smoke test only)')
+
+    parser.add_argument('--warmup', action='store_true', help='(unused, kept for compatibility with training.sh)')
+    parser.add_argument('--AdamW', action='store_true', help='(unused, kept for compatibility with training.sh)')
+    parser.add_argument('--snapshot', type=str, default=None, help='(unused)')
+    return parser.parse_args()
+
+
+# Bleeding-point branches (see sam2/modeling/sam2_base.py). 'estimator' (PWC-Net optical
+# flow) and the prompt encoders stay frozen.
+POINT_KEYS = ['sam_point_decoder', 'point_memory_attention', 'offset_x_proj', 'offset_y_proj']
+ENCODER_KEYS = ['image_encoder.neck'] + [f'image_encoder.trunk.blocks.{i}.' for i in range(18, 24)]
+# Leading dot avoids matching 'point_memory_attention'
+MEMORY_KEYS = ['.memory_attention.', '.memory_encoder.']
+
+
+def build_param_groups(net, args):
+    for param in net.parameters():
+        param.requires_grad = False
+
+    groups = {'decoder': [], 'point': [], 'encoder': [], 'memory': []}
+    for name, param in net.named_parameters():
+        if 'estimator' in name:
+            continue
+        if any(k in name for k in POINT_KEYS):
+            groups['point'].append(param)
+        elif 'mask_decoder' in name or 'edge_generator' in name:
+            groups['decoder'].append(param)
+        elif args.encoder_lr > 0 and any(k in name for k in ENCODER_KEYS):
+            groups['encoder'].append(param)
+        elif args.memory_lr > 0 and any(k in name for k in MEMORY_KEYS):
+            groups['memory'].append(param)
+
+    lrs = {'decoder': args.base_lr, 'point': args.point_lr, 'encoder': args.encoder_lr, 'memory': args.memory_lr}
+    names, param_groups = [], []
+    for g, params in groups.items():
+        if not params:
+            continue
+        for p in params:
+            p.requires_grad = True
+        names.append(g)
+        param_groups.append({'params': params, 'lr': lrs[g]})
+        print(f"Parametri sbloccati {g:<8}: {sum(p.numel() for p in params):>12,}  (lr {lrs[g]:.1e})")
+
+    for g in ('decoder', 'point') + (('encoder',) if args.encoder_lr > 0 else ()):
+        assert groups[g], f"ERRORE: nessun parametro sbloccato per il gruppo '{g}'. Controlla i nomi dei layer."
+    return names, param_groups, [lrs[g] for g in names]
+
+
+def evaluate(net, loader, with_points, max_videos=0):
+    metric = SegmentationMetric(2)
+    frames = exist_tp = point_total = 0
+    pck = {r: [0, 0, 0] for r in ('mlp', 'heat', 'fuse')}  # PCK2/5/10 counts per reading
+    empty_frames = empty_fp = 0   # GT without blood / ... where the model still predicts blood
+
+    with torch.no_grad():
+        for v_idx, sample in enumerate(loader):
+            if max_videos and v_idx >= max_videos:
+                break
+            images = sample['images'].cuda().view(-1, 3, 512, 512)
+            masks = sample['masks'].squeeze(0).cpu()
+            points = sample['points'].squeeze(0).cpu()
+            video_segments = net(images)
+            frames += images.size(0)
+
+            for i in range(images.size(0)):
+                out = video_segments[i][1]
+                sam_pre = torch.sigmoid(out['mask_logits'].unsqueeze(1))
+                sam_pre = F.interpolate(sam_pre, size=(512, 512), mode='bilinear', align_corners=False).squeeze(1)
+                pred_bin, gt_bin = (sam_pre > 0.5).int(), (masks[i] > 0.5).int()
+                metric.addBatch(pred_bin, gt_bin, [255])
+                if gt_bin.sum() == 0:
+                    empty_frames += 1
+                    empty_fp += int(pred_bin.sum() > 0)
+
+                if not with_points:
+                    continue
+                existed_label = (points[i][0] != 0 and points[i][1] != 0)
+                existed_pred = (torch.sigmoid(out['object_score']).cpu().numpy() > 0.5).astype(int)
+                exist_tp += (existed_pred == existed_label.cpu().numpy()).all()
+                if existed_label:
+                    point_total += 1
+                    mlp_pt = out['iou'].float().cpu().view(1, 2)
+                    heat_pt, peak = decode_heatmap(out['point_heatmap'].unsqueeze(0))
+                    heat_pt, peak = heat_pt.cpu(), peak.cpu()
+                    readings = {'mlp': mlp_pt, 'heat': heat_pt, 'fuse': fuse_points(mlp_pt, heat_pt, peak)}
+                    for r, pt in readings.items():
+                        dist = torch.sqrt(torch.sum((points[i].view(1, 2) * 512 - pt * 512) ** 2, dim=-1)).item()
+                        for j, th in enumerate((0.02, 0.05, 0.10)):
+                            pck[r][j] += int(dist < 512 * th)
+
+    iou, dice = metric.IntersectionOverUnion(), metric.DiceCoefficient()
+    res = {'IoU_blood': float(iou[1]), 'Dice_blood': float(dice[1]),
+           'empty_frames': empty_frames,
+           'empty_fp_rate': empty_fp / empty_frames if empty_frames else 0.0}
+    if with_points:
+        res.update({
+            'precision_exist': exist_tp / frames if frames else 0.0,
+            'PCK2': pck['mlp'][0] / point_total if point_total else 0.0,
+            'PCK5': pck['mlp'][1] / point_total if point_total else 0.0,
+            'PCK10': pck['mlp'][2] / point_total if point_total else 0.0,
+            **{f'PCK{t}_{r}': pck[r][j] / point_total if point_total else 0.0
+               for r in ('heat', 'fuse') for j, t in enumerate((2, 5, 10))},
+        })
+    return res
+
+
+def train(Network):
+    args = parser()
+    assert args.batch_size == 1, "Il codice assume una clip per batch (come v3/v5)."
+    os.makedirs(args.save_path, exist_ok=True)
+
+    run = wandb.init(
+        entity="mgualtieri01-unimore",
+        project="BlooDet",
+        name=args.run_name,
+        job_type="fine-tuning",
+        tags=["fine-tuning", "Hemo_Cholec", "SurgBlood", "joint", "point_branches", "point_gate_" + args.point_gate, "v8", "heatmap"],
+        notes="v8: v7-from-baseline + bleeding-point heatmap trained with the MLP (click from MLP).",
+        config=vars(args) | {
+            "architecture": "BlooDet-SAM2",
+            "frames_length": 8,
+            "overlap": 7,
+            "clip_augmentation": not args.no_augment,
+            "balanced_sampling": args.balance,
+            "selection_metric": "mean(Dice Hemo_Cholec val, Dice SurgBlood val)",
+            "point_gates_mask": args.point_gate == 'on',
+        }
+    )
+
+    augment = not args.no_augment
+    hemo_train = CholeBPTrain(args.data_path, args.img_size, mode='train', frames_length=8, overlap=7,
+                              augment=augment, has_point_labels=False)
+    surg_train = CholeBPTrain(args.surgblood_path, args.img_size, mode='train', frames_length=8, overlap=7,
+                              augment=augment, has_point_labels=True)
+    train_dataset = ConcatDataset([hemo_train, surg_train])
+    print(f"Clip Hemo_Cholec: {len(hemo_train)} | Clip SurgBlood: {len(surg_train)} | Totale: {len(train_dataset)}")
+
+    if args.balance:
+        # Optional: each dataset contributes ~50% of the clips seen in an epoch.
+        # Epoch length = 2 x Hemo_Cholec clips: each Hemo_Cholec clip is seen ~once per epoch
+        # (as in v5), plus the same number of randomly drawn SurgBlood clips.
+        weights = [0.5 / len(hemo_train)] * len(hemo_train) + [0.5 / len(surg_train)] * len(surg_train)
+        sampler = WeightedRandomSampler(weights, num_samples=2 * len(hemo_train), replacement=True)
+        print(f"Campionamento bilanciato: {2 * len(hemo_train)} clip per epoca (50% Hemo_Cholec, 50% SurgBlood)")
+        trainloader = DataLoader(train_dataset, batch_size=1, sampler=sampler, num_workers=4, pin_memory=True)
+    else:
+        # Default: all training clips of both datasets, each once per epoch, shuffled together
+        trainloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=4, pin_memory=True)
+
+    val_loaders = {
+        'hemo': DataLoader(CholeBPTest(args.test_data_path, mode='test'), batch_size=1, shuffle=False, num_workers=0),
+        'surg': DataLoader(CholeBPTest(args.surgblood_path, mode='test'), batch_size=1, shuffle=False, num_workers=0),
+    }
+
+    gate_on = (args.point_gate == 'on')
+    net = Network(point_gates_mask=gate_on)
+    net.load_state_dict(torch.load(args.init_ckpt))
+    net.cuda()
+    print(f"Pesi iniziali: {args.init_ckpt}")
+    print(f"Point-existence gate on the blood mask: {'ON' if gate_on else 'OFF (come v7)'} | click alla maschera: MLP")
+    # The gate option is not in the state_dict: store it next to the checkpoints
+    save_model_config(args.save_path, point_gates_mask=gate_on, init_ckpt=args.init_ckpt,
+                      version='v8', heatmap_sigma=args.heatmap_sigma, heatmap_weight=args.heatmap_weight)
+
+    group_names, param_groups, group_base_lrs = build_param_groups(net, args)
+    optimizer = optim.AdamW(param_groups, betas=(0.9, 0.999), weight_decay=0.1)
+
+    sw = SummaryWriter(args.save_path)
+    global_step = 0
+    best_score = 0.0
+
+    for epoch in range(args.max_epochs):
+        net.train(True)
+
+        # Scheduler piramidale applicato proporzionalmente a tutti i gruppi
+        lr_scale = 1 - abs((epoch + 1) / (args.max_epochs + 1) * 2 - 1)
+        for group, group_lr in zip(optimizer.param_groups, group_base_lrs):
+            group['lr'] = lr_scale * group_lr
+
+        for step, sample in enumerate(trainloader):
+            if args.debug_steps and step >= args.debug_steps:
+                break
+            image, mask, edge, point = sample['image'], sample['mask'], sample['edge'], sample['point']
+            point_labeled = bool(sample['point_labeled'].item())
+
+            images = image.float().cuda().view(-1, 3, args.img_size, args.img_size)
+            points = point.float().cuda().view(-1, 2)
+            frame_length = images.size(0)
+
+            video_segments = net(images)
+
+            pre_masks, pre_edges, pre_point, pre_exist, pre_heat = [], [], [], [], []
+            for i in range(frame_length):
+                out = video_segments[i][1]
+                pre_masks.append(out['mask_logits'])
+                pre_point.append(out['iou'])
+                pre_exist.append(out['object_score'])
+                pre_edges.append(out['edge_logits'])
+                pre_heat.append(out['point_heatmap'])
+
+            mask_pred = torch.stack(pre_masks, dim=0)
+            edge_pred = torch.stack(pre_edges, dim=0)
+            pre_point = torch.stack(pre_point, dim=0)
+            existed_score_logits = torch.stack(pre_exist, dim=0)
+
+            mask = mask.squeeze(0).float().cuda()
+            edge = edge.squeeze(0).float().cuda()
+
+            # Maschera + edge: su tutte le clip (Focal + Dice, come v3/v5)
+            lossmask = focal_loss(mask_pred, mask) + dice_loss(mask_pred, mask)
+            lossmask_edge = focal_loss(edge_pred, edge) + dice_loss(edge_pred, edge)
+            loss = lossmask + args.edge_weight * lossmask_edge
+
+            # Punto: solo sulle clip con punti annotati (SurgBlood)
+            if point_labeled:
+                existed_label = (points != 0).any(dim=1).float()
+                loss_exist = F.binary_cross_entropy_with_logits(existed_score_logits, existed_label.unsqueeze(1))
+                loss_point = torch.tensor(0.0, device=points.device)
+                for i in range(points.size(0)):
+                    if not torch.all(points[i] == 0):
+                        loss_point = loss_point + F.smooth_l1_loss(pre_point[i].unsqueeze(0), points[i].unsqueeze(0))
+                loss = loss + args.exist_weight * loss_exist + args.point_weight * loss_point
+
+                # v8: heatmap of the bleeding point (Gaussian target; zeros where there is no point)
+                heat_pred = torch.stack(pre_heat, dim=0)                       # [T, 1, 128, 128]
+                heat_target = gaussian_heatmap_target(points, size=heat_pred.shape[-1], sigma=args.heatmap_sigma)
+                loss_heat = heatmap_focal_loss(heat_pred, heat_target)
+                ramp = 1.0 if args.heatmap_warmup_epochs <= 0 else \
+                    min(1.0, (epoch + step / max(len(trainloader), 1)) / args.heatmap_warmup_epochs)
+                heat_w = args.heatmap_weight * ramp
+                loss = loss + heat_w * loss_heat
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            global_step += 1
+
+            log = {
+                "train/total_loss": loss.item(),
+                "train/mask_loss": lossmask.item(),
+                "train/edge_loss": lossmask_edge.item(),
+                "train/is_surgblood": float(point_labeled),
+            }
+            if point_labeled:
+                log["train/exist_loss"] = loss_exist.item()
+                log["train/point_loss"] = loss_point.item()
+                log["train/heatmap_loss"] = loss_heat.item()
+                log["train/heatmap_weight"] = heat_w
+            for name, group in zip(group_names, optimizer.param_groups):
+                log[f"train/lr_{name}"] = group['lr']
+            run.log(log, step=global_step)
+            for k, v in log.items():
+                sw.add_scalar(k, v, global_step=global_step)
+
+            if step % 200 == 0:
+                lr_str = ', '.join(f'{n}={g["lr"]:.2e}' for n, g in zip(group_names, optimizer.param_groups))
+                pt_str = (f', Exist={loss_exist.item():.4f}, Point={loss_point.item():.4f}, '
+                          f'Heat={loss_heat.item():.4f} (w={heat_w:.2f})' if point_labeled else '')
+                print(f'{datetime.datetime.now()} | Step: {global_step}/{epoch + 1}/{args.max_epochs} | '
+                      f'[{"SurgBlood" if point_labeled else "Hemo_Cholec"}] Total={loss.item():.4f}, '
+                      f'Mask={lossmask.item():.4f}, Edge={lossmask_edge.item():.4f}{pt_str} | LR: {lr_str}')
+
+        ############################# Validation (both domains) #############################
+        net.eval()
+        max_videos = 2 if args.debug_steps else 0
+        res_hemo = evaluate(net, val_loaders['hemo'], with_points=False, max_videos=max_videos)
+        res_surg = evaluate(net, val_loaders['surg'], with_points=True, max_videos=max_videos)
+        score = 0.5 * (res_hemo['Dice_blood'] + res_surg['Dice_blood'])
+
+        print("evaluate_epoch---------------:", epoch + 1)
+        print(f"Hemo_Cholec val -> IoU: {res_hemo['IoU_blood']:.4f} | Dice: {res_hemo['Dice_blood']:.4f}")
+        print(f"SurgBlood   val -> IoU: {res_surg['IoU_blood']:.4f} | Dice: {res_surg['Dice_blood']:.4f} | "
+              f"precision_exist: {res_surg['precision_exist']:.4f} | PCK2: {res_surg['PCK2']:.4f} | "
+              f"PCK5: {res_surg['PCK5']:.4f} | PCK10: {res_surg['PCK10']:.4f} | "
+              f"[heatmap PCK2/5/10: {res_surg['PCK2_heat']:.4f}/{res_surg['PCK5_heat']:.4f}/{res_surg['PCK10_heat']:.4f}] | "
+              f"[fusione PCK2/5/10: {res_surg['PCK2_fuse']:.4f}/{res_surg['PCK5_fuse']:.4f}/{res_surg['PCK10_fuse']:.4f}] | "
+              f"FP su frame senza sangue: {res_surg['empty_fp_rate']:.3f} ({res_surg['empty_frames']} frame)")
+        print(f"Selection score (media Dice): {score:.4f}")
+
+        if score > best_score:
+            best_score = score
+            save_file = os.path.join(args.save_path, 'best_finetuned_v8.pth')
+            torch.save(net.state_dict(), save_file)
+            run.save(save_file)
+            print(f"\n*** Modello migliorato! Salvato in {save_file} (score: {best_score:.4f}) ***\n")
+
+        last_file = os.path.join(args.save_path, 'last_finetuned_v8.pth')
+        torch.save(net.state_dict(), last_file)
+        print(f"Checkpoint aggiornato salvato in: {last_file}")
+
+        val_log = {"epoch": epoch + 1, "val/score": score, "val/best_score": best_score}
+        val_log.update({f"val_hemo/{k}": v for k, v in res_hemo.items()})
+        val_log.update({f"val_surg/{k}": v for k, v in res_surg.items()})
+        run.log(val_log, step=global_step)
+
+    run.finish()
+
+
+if __name__ == '__main__':
+    train(network)

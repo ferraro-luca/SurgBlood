@@ -19,6 +19,7 @@ from sam2.modeling.sam2_utils import get_1d_sine_pe, MLP, select_closest_cond_fr
 from pwcnet.run2 import OpticalFlowEstimator
 
 from sam2.utils.boundary_detector import EdgeGenerator
+from sam2.modeling.point_heatmap import decode_heatmap, fuse_points
 
 # a large negative value as a placeholder score for missing objects
 NO_OBJ_SCORE = -1024.0
@@ -203,6 +204,15 @@ class SAM2Base(torch.nn.Module):
         # (SAM 'not-a-point' label -1). The mask itself is never zeroed: it is decided by
         # edges + memory only. Plain attribute, default False = v7 behaviour.
         self.point_soft_gate = False
+
+        # v8: where the click given to the mask decoder comes from (plain attributes, not in
+        # the state_dict). 'mlp' = original BlooDet (default, v1-v7 unchanged); 'heatmap' =
+        # peak of the point decoder's 128x128 map; 'fusion' = confidence-weighted MLP+heatmap;
+        # 'oracle' = ground-truth point (evaluation only: set self.oracle_points per clip).
+        self.click_source = 'mlp'
+        self.oracle_points = None
+        self._cur_frame_idx = None
+        self._last_point_heatmap = None
 
         self._build_sam_heads()
         self.add_all_frames_to_correct_as_cond = add_all_frames_to_correct_as_cond
@@ -490,11 +500,29 @@ class SAM2Base(torch.nn.Module):
         )
 
         #mask decoder-------------------------------------------------------------------------------------------------
-        BP_point = point_ious  ##[0.5138, 0.4980]
+        # v8: keep the point decoder's 128x128 map (heatmap of the bleeding point)
+        self._last_point_heatmap = point_low_res_multimasks[:, :1]
+        click_xy, click_valid = point_ious, None
+        if self.click_source != 'mlp':
+            hm_pts, hm_peak = decode_heatmap(point_low_res_multimasks[:, :1])
+            if self.click_source == 'heatmap':
+                click_xy = hm_pts.to(point_ious.dtype)
+            elif self.click_source == 'fusion':
+                click_xy = fuse_points(point_ious.float(), hm_pts, hm_peak).to(point_ious.dtype)
+            elif self.click_source == 'oracle':
+                gt = self.oracle_points[self._cur_frame_idx].to(device=point_ious.device, dtype=point_ious.dtype)
+                click_xy = gt.view(1, 2).expand(B, 2)
+                click_valid = ~(click_xy == 0).all(dim=1, keepdim=True)  # no GT point -> no click
+            else:
+                raise ValueError(f"unknown click_source {self.click_source}")
+        BP_point = click_xy  ##[0.5138, 0.4980]
         BP_point = BP_point * self.image_size  # [261.8084, 266.3766]
         BP_point = BP_point.unsqueeze(0)
         BP_sam_point_coords = BP_point
         BP_sam_point_labels = torch.ones(B, 1, dtype=torch.int32, device=device)  # (with label 1)
+        if click_valid is not None:
+            BP_sam_point_labels = torch.where(click_valid, BP_sam_point_labels,
+                                              torch.full_like(BP_sam_point_labels, -1))
         if self.point_soft_gate:
             # no predicted point -> no click (label -1 = SAM 'not a point')
             has_point = (point_object_score_logits.reshape(B, -1)[:, :1] > 0)
@@ -1127,6 +1155,7 @@ class SAM2Base(torch.nn.Module):
                 mask_inputs = prev_sam_mask_logits
             multimask_output = self._use_multimask(is_init_cond_frame, point_inputs)
 
+            self._cur_frame_idx = frame_idx  # v8: used by click_source='oracle'
             sam_outputs = self._forward_sam_heads(
                 backbone_features=pix_feat_with_mem,
                 #my code
@@ -1168,6 +1197,7 @@ class SAM2Base(torch.nn.Module):
 
         current_out["pointmem_features"] = BP_point_embedding
         current_out["pred_edges"] = edge_res_masks
+        current_out["point_heatmap"] = self._last_point_heatmap  # v8
 
         # Finally run the memory encoder on the predicted mask to encode
         # it into a new memory feature (that can be used in future frames)

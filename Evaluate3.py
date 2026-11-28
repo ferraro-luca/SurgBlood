@@ -39,6 +39,8 @@ def parser():
                         help="auto = legge model_config.json accanto al checkpoint (v7: off; v1-v6: on)")
     parser.add_argument('--soft_gate', choices=['auto', 'on', 'off'], default='auto',
                         help="on = nessun click al mask decoder quando lo score dice 'nessun punto'")
+    parser.add_argument('--click_source', choices=['mlp', 'heatmap', 'fusion', 'oracle'], default='mlp',
+                        help="v8: da dove arriva il click alla maschera (mlp = come sempre; oracle = punto vero, solo SurgBlood)")
 
     return parser.parse_args()
 
@@ -78,6 +80,7 @@ def train(Network, testpath):
             "tta": False,
             "point_gate": args.point_gate,
             "soft_gate": args.soft_gate,
+            "click_source": args.click_source,
             "threshold": threshold,
         }
     )
@@ -91,6 +94,10 @@ def train(Network, testpath):
     net = Network(model_cfg=model_cfg)
     net.load_state_dict(torch.load(args.snapshot))
     apply_model_config(net, args.snapshot, args.point_gate, args.soft_gate)
+    if args.click_source == 'oracle':
+        raise SystemExit("click_source=oracle richiede i punti annotati: usarlo solo con Evaluate2 (SurgBlood)")
+    net.predictor.click_source = args.click_source
+    print(f"Click alla maschera da: {args.click_source}")
     net.eval()
     net.cuda()
 

@@ -161,7 +161,7 @@ class SAM2_Video_baseline(nn.Module):
         start_time = time.time()  # Record the start time for this frame
 
         # frame_idx, obj_ids, video_res_masks, iou, object_score_logits
-        for out_frame_idx, out_obj_ids, out_mask_logits, iou, object_score_logits,out_edge_logits in self.predictor.train_propagate_in_video(inference_state):
+        for out_frame_idx, out_obj_ids, out_mask_logits, iou, object_score_logits,out_edge_logits, out_point_heatmap in self.predictor.train_propagate_in_video(inference_state):
             # start_time = time.time()  # Record the start time for this frame
             total_frames += 1
             video_segments[out_frame_idx] = {
@@ -169,7 +169,9 @@ class SAM2_Video_baseline(nn.Module):
                     'mask_logits': out_mask_logits[i],
                     'iou': iou[i],
                     'object_score': object_score_logits[i],
-                    'edge_logits': out_edge_logits[i]
+                    'edge_logits': out_edge_logits[i],
+                    # v8: point decoder 128x128 map (logits); None only if not produced
+                    'point_heatmap': out_point_heatmap[i] if out_point_heatmap is not None else None,
                 } for i, out_obj_id in enumerate(out_obj_ids)
             }
 
